@@ -1,0 +1,2407 @@
+<!doctype html>
+<html>
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1">
+  <title>Mac App Mover</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
+  <style>
+    :root {
+      --bg-app: #080b11;
+      --bg-sidebar: #0f1322;
+      --bg-card: rgba(22, 29, 49, 0.5);
+      --bg-card-hover: rgba(29, 38, 64, 0.75);
+      --border: rgba(255, 255, 255, 0.06);
+      --border-hover: rgba(255, 255, 255, 0.12);
+      --text: #f3f4f6;
+      --text-muted: #9ca3af;
+      --primary: #3b82f6;
+      --primary-glow: rgba(59, 130, 246, 0.25);
+      --success: #10b981;
+      --error: #ef4444;
+      --font-sans: 'Plus Jakarta Sans', -apple-system, BlinkMacSystemFont, sans-serif;
+      --font-mono: 'JetBrains Mono', ui-monospace, monospace;
+      
+      --color-doc: #ff3b30;
+      --color-dev: #ff9500;
+      --color-app: #ffcc00;
+      --color-sys: #8e8e93;
+      --color-macos: #d1d1d6;
+    }
+
+    * {
+      box-sizing: border-box;
+      margin: 0;
+      padding: 0;
+    }
+
+    body {
+      background: var(--bg-app);
+      color: var(--text);
+      font-family: var(--font-sans);
+      height: 100vh;
+      overflow: hidden;
+    }
+
+    .scrollable::-webkit-scrollbar {
+      width: 6px;
+      height: 6px;
+    }
+    .scrollable::-webkit-scrollbar-track {
+      background: transparent;
+    }
+    .scrollable::-webkit-scrollbar-thumb {
+      background: rgba(255, 255, 255, 0.1);
+      border-radius: 3px;
+    }
+    .scrollable::-webkit-scrollbar-thumb:hover {
+      background: rgba(255, 255, 255, 0.2);
+    }
+
+    .app-layout {
+      display: flex;
+      height: 100vh;
+      width: 100vw;
+    }
+
+    .sidebar {
+      width: 280px;
+      background: var(--bg-sidebar);
+      border-right: 1px solid var(--border);
+      display: flex;
+      flex-direction: column;
+      padding: 24px;
+      flex-shrink: 0;
+    }
+
+    .brand {
+      display: flex;
+      align-items: center;
+      gap: 12px;
+      margin-bottom: 32px;
+    }
+
+    .brand-icon {
+      width: 32px;
+      height: 32px;
+      background: linear-gradient(135deg, var(--primary), #8b5cf6);
+      border-radius: 8px;
+      display: grid;
+      place-items: center;
+      box-shadow: 0 4px 12px rgba(59, 130, 246, 0.3);
+    }
+
+    .brand h1 {
+      font-size: 16px;
+      font-weight: 700;
+      letter-spacing: -0.5px;
+      background: linear-gradient(to right, #ffffff, #cbd5e1);
+      -webkit-background-clip: text;
+      -webkit-text-fill-color: transparent;
+    }
+
+    .volume-box {
+      background: rgba(255, 255, 255, 0.02);
+      border: 1px solid var(--border);
+      border-radius: 12px;
+      padding: 16px;
+      margin-bottom: 24px;
+    }
+
+    .volume-box label {
+      display: block;
+      font-size: 11px;
+      font-weight: 600;
+      text-transform: uppercase;
+      color: var(--text-muted);
+      margin-bottom: 8px;
+      letter-spacing: 0.5px;
+    }
+
+    .select-wrapper {
+      position: relative;
+    }
+
+    .volume-box select {
+      width: 100%;
+      height: 38px;
+      background: #161b2c;
+      border: 1px solid var(--border);
+      border-radius: 8px;
+      color: var(--text);
+      font-family: inherit;
+      font-size: 13px;
+      padding: 0 12px;
+      appearance: none;
+      cursor: pointer;
+      outline: none;
+      transition: border-color 0.2s;
+    }
+
+    .volume-box select:focus {
+      border-color: var(--primary);
+    }
+
+    .select-chevron {
+      position: absolute;
+      right: 12px;
+      top: 50%;
+      transform: translateY(-50%);
+      pointer-events: none;
+      stroke: var(--text-muted);
+      fill: none;
+    }
+
+    .nav-menu {
+      display: flex;
+      flex-direction: column;
+      gap: 8px;
+      flex: 1;
+    }
+
+    .tab-btn {
+      background: transparent;
+      border: none;
+      border-radius: 8px;
+      color: var(--text-muted);
+      font-family: inherit;
+      font-size: 14px;
+      font-weight: 500;
+      height: 42px;
+      padding: 0 14px;
+      display: flex;
+      align-items: center;
+      gap: 12px;
+      cursor: pointer;
+      transition: all 0.2s;
+      text-align: left;
+    }
+
+    .tab-btn:hover {
+      background: rgba(255, 255, 255, 0.03);
+      color: var(--text);
+    }
+
+    .tab-btn.active {
+      background: linear-gradient(135deg, rgba(59, 130, 246, 0.12), rgba(139, 92, 246, 0.06));
+      border: 1px solid rgba(59, 130, 246, 0.2);
+      color: #60a5fa;
+      font-weight: 600;
+      box-shadow: 0 4px 12px rgba(0, 0, 0, 0.15);
+    }
+
+    .tab-btn svg {
+      width: 18px;
+      height: 18px;
+      stroke: currentColor;
+      stroke-width: 2;
+      fill: none;
+    }
+
+    .sidebar-footer {
+      margin-top: auto;
+      padding-top: 16px;
+      border-top: 1px solid var(--border);
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      font-size: 12px;
+      color: var(--text-muted);
+    }
+
+    .status-dot {
+      width: 8px;
+      height: 8px;
+      border-radius: 50%;
+      background: var(--success);
+      box-shadow: 0 0 8px var(--success);
+    }
+    .status-dot.loading {
+      background: var(--color-dev);
+      box-shadow: 0 0 8px var(--color-dev);
+      animation: pulse 1.5s infinite;
+    }
+
+    @keyframes pulse {
+      0% { opacity: 0.4; }
+      50% { opacity: 1; }
+      100% { opacity: 0.4; }
+    }
+
+    .main-content {
+      flex: 1;
+      padding: 32px;
+      overflow-y: auto;
+      background: radial-gradient(circle at top right, rgba(17, 24, 39, 0.3), transparent);
+    }
+
+    .tab-content {
+      display: none;
+      height: 100%;
+    }
+
+    .tab-content.active {
+      display: block;
+    }
+
+    .mover-grid {
+      display: grid;
+      grid-template-columns: 360px 1fr;
+      gap: 24px;
+      height: 100%;
+    }
+
+    .card {
+      background: var(--bg-card);
+      border: 1px solid var(--border);
+      border-radius: 16px;
+      backdrop-filter: blur(12px);
+      display: flex;
+      flex-direction: column;
+      min-height: 0;
+      box-shadow: 0 10px 30px rgba(0, 0, 0, 0.2);
+    }
+
+    .card-header {
+      padding: 20px 24px;
+      border-bottom: 1px solid var(--border);
+      display: flex;
+      flex-direction: column;
+      gap: 12px;
+    }
+
+    .card-header h3 {
+      font-size: 15px;
+      font-weight: 600;
+      color: var(--text);
+    }
+
+    .search-bar {
+      position: relative;
+    }
+
+    .search-bar input {
+      width: 100%;
+      height: 38px;
+      background: rgba(0, 0, 0, 0.25);
+      border: 1px solid var(--border);
+      border-radius: 8px;
+      color: var(--text);
+      padding: 0 12px 0 38px;
+      font-family: inherit;
+      font-size: 13px;
+      outline: none;
+      transition: all 0.2s;
+    }
+
+    .search-bar input:focus {
+      border-color: var(--primary);
+      box-shadow: 0 0 0 3px var(--primary-glow);
+    }
+
+    .search-bar svg {
+      position: absolute;
+      left: 12px;
+      top: 50%;
+      transform: translateY(-50%);
+      stroke: var(--text-muted);
+      pointer-events: none;
+    }
+
+    .list {
+      flex: 1;
+      overflow-y: auto;
+      padding: 12px;
+      display: flex;
+      flex-direction: column;
+      gap: 6px;
+    }
+
+    .app-item {
+      border: 1px solid transparent;
+      border-radius: 10px;
+      padding: 12px 14px;
+      cursor: grab;
+      transition: all 0.2s;
+      background: rgba(255, 255, 255, 0.01);
+      display: flex;
+      align-items: center;
+      gap: 10px;
+    }
+
+    .app-item-main {
+      flex: 1;
+      min-width: 0;
+    }
+
+    .app-item:hover {
+      background: var(--bg-card-hover);
+      border-color: var(--border-hover);
+    }
+
+    .app-item.selected {
+      background: rgba(59, 130, 246, 0.12);
+      border-color: rgba(59, 130, 246, 0.4);
+    }
+
+    .app-item .name {
+      font-size: 13.5px;
+      font-weight: 600;
+      color: var(--text);
+      margin-bottom: 4px;
+    }
+
+    .app-item .meta {
+      font-size: 11px;
+      color: var(--text-muted);
+      font-family: var(--font-mono);
+      overflow: hidden;
+      text-overflow: ellipsis;
+      white-space: nowrap;
+    }
+
+    .btn-move-data-inline {
+      flex-shrink: 0;
+      background: rgba(16, 185, 129, 0.12);
+      border: 1px solid rgba(16, 185, 129, 0.35);
+      border-radius: 8px;
+      color: #6ee7b7;
+      font-family: inherit;
+      font-size: 11px;
+      font-weight: 600;
+      padding: 6px 10px;
+      cursor: pointer;
+      transition: all 0.2s;
+    }
+
+    .btn-move-data-inline:hover {
+      background: rgba(16, 185, 129, 0.22);
+      color: #a7f3d0;
+    }
+
+    .preview-actions {
+      display: flex;
+      align-items: center;
+      gap: 10px;
+      flex-shrink: 0;
+    }
+
+    #move-data {
+      border-color: rgba(16, 185, 129, 0.35);
+      color: #6ee7b7;
+    }
+
+    #move-data:hover:not(:disabled) {
+      background: rgba(16, 185, 129, 0.15);
+      border-color: rgba(16, 185, 129, 0.5);
+    }
+
+    .right-pane {
+      display: flex;
+      flex-direction: column;
+      gap: 24px;
+      height: 100%;
+    }
+
+    .drop-zone {
+      border: 2px dashed rgba(59, 130, 246, 0.3);
+      border-radius: 16px;
+      height: 110px;
+      display: flex;
+      flex-direction: column;
+      justify-content: center;
+      align-items: center;
+      gap: 8px;
+      color: var(--text-muted);
+      font-size: 14px;
+      background: rgba(59, 130, 246, 0.01);
+      transition: all 0.2s;
+      cursor: default;
+    }
+
+    .drop-zone.hot {
+      border-color: var(--primary);
+      background: rgba(59, 130, 246, 0.08);
+      color: var(--text);
+      box-shadow: 0 0 15px rgba(59, 130, 246, 0.15);
+    }
+
+    .drop-zone svg {
+      stroke: var(--primary);
+      margin-bottom: 4px;
+    }
+
+    .preview-container {
+      flex: 1;
+      display: flex;
+      flex-direction: column;
+      min-height: 0;
+    }
+
+    .preview-header {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      padding-bottom: 16px;
+      border-bottom: 1px solid var(--border);
+    }
+
+    .preview-header h4 {
+      font-size: 15px;
+      font-weight: 600;
+      margin-bottom: 2px;
+    }
+
+    .preview-header p {
+      font-size: 12px;
+      color: var(--text-muted);
+    }
+
+    .btn-primary {
+      background: linear-gradient(135deg, var(--primary), #2563eb);
+      border: none;
+      border-radius: 8px;
+      color: #fff;
+      font-family: inherit;
+      font-weight: 600;
+      font-size: 13px;
+      height: 38px;
+      padding: 0 16px;
+      cursor: pointer;
+      transition: all 0.2s;
+      box-shadow: 0 4px 12px rgba(37, 99, 235, 0.3);
+    }
+
+    .btn-primary:hover:not(:disabled) {
+      transform: translateY(-1px);
+      box-shadow: 0 6px 16px rgba(37, 99, 235, 0.4);
+    }
+
+    .btn-primary:disabled {
+      opacity: 0.5;
+      cursor: not-allowed;
+      box-shadow: none;
+    }
+
+    .btn-secondary {
+      background: rgba(255, 255, 255, 0.05);
+      border: 1px solid var(--border);
+      border-radius: 8px;
+      color: var(--text);
+      font-family: inherit;
+      font-size: 13px;
+      height: 34px;
+      padding: 0 14px;
+      cursor: pointer;
+      transition: all 0.2s;
+    }
+
+    .btn-secondary:hover:not(:disabled) {
+      background: rgba(255, 255, 255, 0.1);
+      border-color: var(--border-hover);
+    }
+
+    .preview-items {
+      flex: 1;
+      overflow-y: auto;
+      padding: 16px 0;
+      font-size: 12px;
+      line-height: 1.6;
+      white-space: pre-wrap;
+    }
+
+    .actions-footer {
+      padding-top: 16px;
+      border-top: 1px solid var(--border);
+      display: flex;
+      align-items: center;
+      gap: 12px;
+    }
+
+    .status-text {
+      margin-left: auto;
+      font-size: 13px;
+    }
+
+    .console-log {
+      height: 160px;
+      background: #060912;
+      border: 1px solid var(--border);
+      border-radius: 10px;
+      padding: 12px;
+      font-size: 11.5px;
+      line-height: 1.6;
+      overflow-y: auto;
+      margin-top: 16px;
+      box-shadow: inset 0 2px 8px rgba(0, 0, 0, 0.6);
+      color: #10b981;
+    }
+
+    /* Tab 2: Storage Analyzer Layout */
+    .storage-layout {
+      display: flex;
+      flex-direction: column;
+      gap: 24px;
+      height: 100%;
+    }
+
+    .storage-dashboard {
+      background: var(--bg-card);
+      border: 1px solid var(--border);
+      border-radius: 16px;
+      padding: 24px;
+      backdrop-filter: blur(12px);
+      box-shadow: 0 10px 30px rgba(0, 0, 0, 0.2);
+    }
+
+    .dashboard-header {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      margin-bottom: 20px;
+    }
+
+    .drive-info {
+      display: flex;
+      align-items: center;
+      gap: 16px;
+    }
+
+    .drive-icon {
+      width: 44px;
+      height: 44px;
+      background: rgba(255, 255, 255, 0.03);
+      border: 1px solid var(--border);
+      border-radius: 10px;
+      display: grid;
+      place-items: center;
+      color: var(--text-muted);
+    }
+
+    .drive-info h4 {
+      font-size: 16px;
+      font-weight: 600;
+    }
+
+    .drive-info p {
+      font-size: 12.5px;
+      color: var(--text-muted);
+      margin-top: 2px;
+    }
+
+    .storage-bar-container {
+      height: 22px;
+      background: #151a29;
+      border-radius: 11px;
+      overflow: hidden;
+      display: flex;
+      margin-bottom: 20px;
+      border: 1px solid rgba(255, 255, 255, 0.04);
+    }
+
+    .bar-segment {
+      height: 100%;
+      transition: width 0.6s cubic-bezier(0.16, 1, 0.3, 1);
+    }
+
+    .legend-grid {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 12px 24px;
+    }
+
+    .legend-item {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      font-size: 13px;
+      cursor: pointer;
+      padding: 4px 8px;
+      border-radius: 6px;
+      transition: background-color 0.2s;
+    }
+
+    .legend-item:hover {
+      background: rgba(255, 255, 255, 0.04);
+    }
+
+    .legend-dot {
+      width: 10px;
+      height: 10px;
+      border-radius: 50%;
+      flex-shrink: 0;
+    }
+
+    .legend-dot.free {
+      background-color: #1e2436;
+      border: 1px dashed var(--text-muted);
+    }
+
+    .legend-item .size {
+      color: var(--text-muted);
+      font-weight: 500;
+    }
+
+    .scanning-card {
+      background: linear-gradient(135deg, rgba(59, 130, 246, 0.08), rgba(139, 92, 246, 0.04));
+      border: 1px solid rgba(59, 130, 246, 0.15);
+      border-radius: 14px;
+      padding: 20px;
+      display: flex;
+      flex-direction: column;
+      gap: 12px;
+      box-shadow: 0 4px 20px rgba(59, 130, 246, 0.05);
+    }
+
+    .scanning-header-row {
+      display: flex;
+      align-items: center;
+      gap: 12px;
+    }
+
+    .spinner {
+      width: 20px;
+      height: 20px;
+      border: 2px solid rgba(255, 255, 255, 0.1);
+      border-top-color: var(--primary);
+      border-radius: 50%;
+      animation: spin 1s linear infinite;
+      flex-shrink: 0;
+    }
+
+    @keyframes spin {
+      to { transform: rotate(360deg); }
+    }
+
+    .scanning-card h5 {
+      font-size: 13.5px;
+      font-weight: 600;
+    }
+
+    .scanning-card p {
+      font-size: 11px;
+      color: var(--text-muted);
+      font-family: var(--font-mono);
+      overflow: hidden;
+      text-overflow: ellipsis;
+      white-space: nowrap;
+    }
+
+    .progress-track {
+      height: 6px;
+      background: rgba(255, 255, 255, 0.04);
+      border-radius: 3px;
+      overflow: hidden;
+    }
+
+    .progress-fill {
+      height: 100%;
+      background: linear-gradient(to right, var(--primary), #8b5cf6);
+      width: 0%;
+      transition: width 0.3s;
+      box-shadow: 0 0 8px var(--primary);
+    }
+
+    .breakdown-grid {
+      display: grid;
+      grid-template-columns: 280px 1fr;
+      gap: 24px;
+      flex: 1;
+      min-height: 0;
+    }
+
+    .category-cards {
+      display: flex;
+      flex-direction: column;
+      gap: 10px;
+    }
+
+    .category-card {
+      background: var(--bg-card);
+      border: 1px solid var(--border);
+      border-radius: 12px;
+      padding: 14px 16px;
+      cursor: pointer;
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      transition: all 0.2s;
+    }
+
+    .category-card:hover {
+      background: var(--bg-card-hover);
+      border-color: var(--border-hover);
+    }
+
+    .category-card.active {
+      background: rgba(255, 255, 255, 0.03);
+      border-color: var(--primary);
+      box-shadow: 0 0 0 1px var(--primary);
+    }
+
+    .category-card-info {
+      display: flex;
+      align-items: center;
+      gap: 12px;
+      min-width: 0;
+    }
+
+    .category-card h5 {
+      font-size: 13px;
+      font-weight: 600;
+      overflow: hidden;
+      text-overflow: ellipsis;
+      white-space: nowrap;
+    }
+
+    .category-card p {
+      font-size: 11px;
+      color: var(--text-muted);
+      margin-top: 2px;
+    }
+
+    .category-card .size {
+      font-size: 14px;
+      font-weight: 600;
+      flex-shrink: 0;
+    }
+
+    .details-card {
+      display: flex;
+      flex-direction: column;
+      min-height: 0;
+      background: var(--bg-card);
+      border: 1px solid var(--border);
+      border-radius: 16px;
+      box-shadow: 0 10px 30px rgba(0, 0, 0, 0.2);
+    }
+
+    .details-title-bar {
+      padding: 20px 24px;
+      border-bottom: 1px solid var(--border);
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+    }
+
+    .details-title-bar h4 {
+      font-size: 14px;
+      font-weight: 600;
+    }
+
+    .details-title-bar span {
+      font-size: 12px;
+      color: var(--text-muted);
+    }
+
+    .details-rows {
+      flex: 1;
+      overflow-y: auto;
+      padding: 16px 24px;
+      display: flex;
+      flex-direction: column;
+      gap: 14px;
+    }
+
+    .detail-row {
+      display: flex;
+      flex-direction: column;
+      gap: 4px;
+      padding-bottom: 12px;
+      border-bottom: 1px solid rgba(255, 255, 255, 0.02);
+    }
+
+    .detail-row-header {
+      display: flex;
+      justify-content: space-between;
+      align-items: flex-start;
+      font-size: 13px;
+      gap: 16px;
+    }
+
+    .detail-row-name {
+      font-weight: 600;
+      color: var(--text);
+      word-break: break-all;
+    }
+
+    .detail-row-size {
+      font-weight: 600;
+      color: var(--text);
+      white-space: nowrap;
+      font-family: var(--font-mono);
+    }
+
+    .detail-row-path {
+      font-size: 11px;
+      color: var(--text-muted);
+      font-family: var(--font-mono);
+      word-break: break-all;
+      margin-top: 1px;
+    }
+
+    .detail-progress-track {
+      height: 4px;
+      background: rgba(255, 255, 255, 0.03);
+      border-radius: 2px;
+      overflow: hidden;
+      margin-top: 6px;
+    }
+
+    .detail-progress-fill {
+      height: 100%;
+      border-radius: 2px;
+    }
+
+    .empty-state {
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      justify-content: center;
+      height: 240px;
+      color: var(--text-muted);
+      font-size: 13.5px;
+      gap: 12px;
+    }
+
+    /* ===== UNINSTALL TAB ===== */
+    .uninstall-layout { display: grid; grid-template-columns: 320px 1fr; gap: 24px; height: 100%; }
+    .uninstall-app-list { display: flex; flex-direction: column; min-height: 0; }
+    .uninstall-search { display: flex; align-items: center; gap: 10px; padding: 14px 16px; border-bottom: 1px solid var(--border); }
+    .uninstall-search input { flex: 1; background: rgba(255,255,255,0.04); border: 1px solid var(--border); border-radius: 8px; color: var(--text); font-family: inherit; font-size: 13px; padding: 8px 12px; outline: none; transition: border-color 0.2s; }
+    .uninstall-search input:focus { border-color: var(--primary); }
+    .uninstall-app-item { display: flex; align-items: center; gap: 12px; padding: 10px 16px; cursor: pointer; border-bottom: 1px solid rgba(255,255,255,0.03); transition: background 0.15s; }
+    .uninstall-app-item:hover { background: rgba(255,255,255,0.04); }
+    .uninstall-app-item.selected { background: linear-gradient(90deg, rgba(239,68,68,0.08), transparent); border-left: 3px solid #ef4444; }
+    .uninstall-app-icon { width: 34px; height: 34px; border-radius: 8px; background: linear-gradient(135deg, #1e293b, #0f172a); border: 1px solid var(--border); display: flex; align-items: center; justify-content: center; flex-shrink: 0; font-size: 16px; }
+    .uninstall-app-info { flex: 1; min-width: 0; }
+    .uninstall-app-name { font-size: 13px; font-weight: 600; color: var(--text); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+    .uninstall-app-meta { font-size: 11px; color: var(--text-muted); margin-top: 2px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+    .badge-linked { font-size: 10px; padding: 2px 6px; border-radius: 20px; background: rgba(59,130,246,0.15); color: #60a5fa; border: 1px solid rgba(59,130,246,0.2); white-space: nowrap; flex-shrink: 0; }
+    .uninstall-detail { display: flex; flex-direction: column; min-height: 0; }
+    .uninstall-detail-header { padding: 18px 22px 14px; border-bottom: 1px solid var(--border); display: flex; align-items: flex-start; justify-content: space-between; gap: 14px; }
+    .uninstall-detail-title h4 { font-size: 15px; font-weight: 700; color: var(--text); margin-bottom: 3px; }
+    .uninstall-detail-title p { font-size: 12.5px; color: var(--text-muted); }
+    .uninstall-actions { display: flex; gap: 10px; align-items: center; flex-shrink: 0; }
+    .btn-danger { background: linear-gradient(135deg, #dc2626, #b91c1c); border: 1px solid rgba(239,68,68,0.4); border-radius: 10px; color: #fff; font-family: inherit; font-size: 13px; font-weight: 600; padding: 9px 18px; cursor: pointer; display: flex; align-items: center; gap: 8px; transition: all 0.2s; box-shadow: 0 4px 14px rgba(220,38,38,0.3); }
+    .btn-danger:hover:not(:disabled) { background: linear-gradient(135deg, #ef4444, #dc2626); box-shadow: 0 6px 20px rgba(220,38,38,0.45); transform: translateY(-1px); }
+    .btn-danger:disabled { opacity: 0.4; cursor: not-allowed; transform: none; box-shadow: none; }
+    .btn-danger svg { width: 15px; height: 15px; stroke: currentColor; fill: none; stroke-width: 2; }
+    .uninstall-files-list { flex: 1; overflow-y: auto; padding: 8px 0; }
+    .check-all-row { display: flex; align-items: center; gap: 10px; padding: 8px 22px; border-bottom: 1px solid var(--border); font-size: 12px; color: var(--text-muted); cursor: pointer; }
+    .check-all-row:hover { background: rgba(255,255,255,0.02); }
+    .uninstall-file-item { display: flex; align-items: flex-start; gap: 12px; padding: 10px 22px; border-bottom: 1px solid rgba(255,255,255,0.03); transition: background 0.12s; cursor: pointer; }
+    .uninstall-file-item:hover { background: rgba(255,255,255,0.02); }
+    .uninstall-file-item.checked { background: rgba(239,68,68,0.05); }
+    .file-checkbox { width: 16px; height: 16px; accent-color: #ef4444; margin-top: 3px; flex-shrink: 0; cursor: pointer; }
+    .file-item-info { flex: 1; min-width: 0; }
+    .file-item-header { display: flex; align-items: center; gap: 8px; margin-bottom: 3px; }
+    .file-item-name { font-size: 13px; font-weight: 600; color: var(--text); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; flex: 1; }
+    .file-item-size { font-size: 12px; font-weight: 700; color: #ef4444; flex-shrink: 0; }
+    .file-item-category { font-size: 10px; padding: 1px 7px; border-radius: 20px; background: rgba(255,255,255,0.06); color: var(--text-muted); flex-shrink: 0; }
+    .file-item-category.app-bundle { background: rgba(251,191,36,0.12); color: #fbbf24; }
+    .file-item-path { font-size: 11px; color: var(--text-muted); font-family: var(--font-mono); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+    .file-item-symlink { font-size: 11px; color: #60a5fa; margin-top: 2px; }
+    .file-progress-bar { margin-top: 5px; height: 2px; background: rgba(255,255,255,0.05); border-radius: 2px; overflow: hidden; }
+    .file-progress-fill { height: 100%; border-radius: 2px; background: linear-gradient(90deg, #ef4444, #f97316); transition: width 0.3s ease; }
+    .uninstall-footer { padding: 13px 22px; border-top: 1px solid var(--border); display: flex; align-items: center; justify-content: space-between; background: rgba(0,0,0,0.15); gap: 12px; }
+    .uninstall-sel-info { font-size: 13px; color: var(--text-muted); }
+    .uninstall-sel-info span { color: var(--text); font-weight: 600; }
+    .uninstall-empty { display: flex; flex-direction: column; align-items: center; justify-content: center; height: 100%; gap: 12px; color: var(--text-muted); font-size: 14px; }
+    .uninstall-empty svg { width: 48px; height: 48px; stroke: rgba(255,255,255,0.1); fill: none; stroke-width: 1.5; }
+    .uninstall-loading { display: flex; align-items: center; justify-content: center; height: 100%; gap: 12px; color: var(--text-muted); }
+    .uninstall-result-row { display: flex; align-items: center; gap: 10px; padding: 8px 22px; font-size: 12px; font-family: var(--font-mono); border-bottom: 1px solid rgba(255,255,255,0.03); }
+    .uninstall-result-row.ok { color: var(--success); }
+    .uninstall-result-row.fail { color: var(--error); }
+
+    /* ===== STUCK UPDATES TAB ===== */
+    .stuck-item { display: grid; grid-template-columns: 56px 1fr auto; align-items: center; gap: 16px; padding: 16px 20px; border-bottom: 1px solid rgba(255,255,255,0.05); transition: background 0.15s; }
+    .stuck-item:hover { background: rgba(255,255,255,0.025); }
+    .stuck-item-icon { width: 48px; height: 48px; border-radius: 12px; background: rgba(245,158,11,0.1); border: 1px solid rgba(245,158,11,0.25); display: grid; place-items: center; color: #fbbf24; flex-shrink: 0; }
+    .stuck-item-icon svg { width: 24px; height: 24px; stroke: currentColor; fill: none; stroke-width: 1.8; }
+    .stuck-item-info { min-width: 0; }
+    .stuck-item-name { font-size: 14px; font-weight: 600; color: var(--text); display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+    .stuck-item-bundle { font-size: 11px; color: var(--text-muted); font-family: var(--font-mono); margin-top: 3px; }
+    .stuck-item-paths { font-size: 11px; color: var(--text-muted); margin-top: 8px; line-height: 1.55; font-family: var(--font-mono); word-break: break-all; }
+    .stuck-item-paths code { color: #cbd5e1; background: rgba(255,255,255,0.04); padding: 1px 5px; border-radius: 4px; }
+    .stuck-item-meta { font-size: 11px; color: var(--text-muted); margin-top: 4px; }
+    .stuck-item-actions { display: flex; align-items: center; gap: 10px; flex-shrink: 0; }
+    .stuck-badge { font-size: 10px; padding: 2px 8px; border-radius: 20px; background: rgba(245,158,11,0.15); color: #fcd34d; border: 1px solid rgba(245,158,11,0.3); white-space: nowrap; }
+    .stuck-badge.symlink { background: rgba(16,185,129,0.12); color: #34d399; border-color: rgba(16,185,129,0.3); }
+    .stuck-badge.missing { background: rgba(239,68,68,0.12); color: #f87171; border-color: rgba(239,68,68,0.3); }
+    .stuck-badge.broken { background: rgba(239,68,68,0.12); color: #f87171; border-color: rgba(239,68,68,0.3); }
+    .stuck-badge.local { background: rgba(245,158,11,0.12); color: #fbbf24; border-color: rgba(245,158,11,0.3); }
+    .btn-recover { background: linear-gradient(135deg, #f59e0b, #d97706); border: 1px solid rgba(245,158,11,0.4); border-radius: 10px; color: #fff; font-family: inherit; font-size: 13px; font-weight: 600; padding: 9px 18px; cursor: pointer; transition: all 0.2s; box-shadow: 0 4px 14px rgba(217,119,6,0.25); }
+    .btn-recover:hover:not(:disabled) { transform: translateY(-1px); box-shadow: 0 6px 18px rgba(217,119,6,0.4); }
+    .btn-recover:disabled { opacity: 0.4; cursor: not-allowed; box-shadow: none; transform: none; }
+    .btn-delete-stuck { background: rgba(239,68,68,0.12); border: 1px solid rgba(239,68,68,0.35); border-radius: 10px; color: #fca5a5; font-family: inherit; font-size: 13px; font-weight: 600; padding: 9px 16px; cursor: pointer; transition: all 0.2s; }
+    .btn-delete-stuck:hover:not(:disabled) { background: rgba(239,68,68,0.22); color: #fecaca; transform: translateY(-1px); }
+    .btn-delete-stuck:disabled { opacity: 0.4; cursor: not-allowed; transform: none; }
+    .stuck-summary { padding: 12px 22px; font-size: 12.5px; color: var(--text-muted); display: flex; align-items: center; gap: 10px; border-bottom: 1px solid var(--border); }
+    .stuck-summary strong { color: #fbbf24; font-weight: 600; }
+
+    /* ===== CLEANER TAB (Dọn ổ Mac) ===== */
+    .cleaner-layout { display: flex; flex-direction: column; height: 100%; gap: 16px; }
+    .cleaner-toolbar { display: flex; align-items: center; gap: 12px; }
+    .cleaner-toolbar .spacer { flex: 1; }
+    .cleaner-scope-note { font-size: 11.5px; color: var(--text-muted); background: rgba(255,255,255,0.03); border: 1px solid var(--border); border-radius: 8px; padding: 6px 10px; }
+    .cleaner-category-header { padding: 10px 22px 6px; font-size: 11px; font-weight: 700; text-transform: uppercase; letter-spacing: 0.5px; color: var(--text-muted); background: rgba(255,255,255,0.015); position: sticky; top: 0; }
+    .file-item-category.risk-caution { background: rgba(245,158,11,0.15); color: #fbbf24; }
+    .cleaner-item-desc { font-size: 11px; color: var(--text-muted); margin-top: 3px; line-height: 1.4; }
+  </style>
+</head>
+<body>
+  <div class="app-layout">
+    <!-- Sidebar -->
+    <aside class="sidebar">
+      <div class="brand">
+        <div class="brand-icon">
+          <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="white" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 2L2 7l10 5 10-5-10-5zM2 17l10 5 10-5M2 12l10 5 10-5"/></svg>
+        </div>
+        <h1>Mac App Mover</h1>
+      </div>
+      
+      <div class="volume-box">
+        <label for="volume">Ổ ngoài (Razer)</label>
+        <div class="select-wrapper">
+          <select id="volume"></select>
+          <svg class="select-chevron" width="16" height="16" viewBox="0 0 24 24"><polyline points="6 9 12 15 18 9"></polyline></svg>
+        </div>
+      </div>
+      
+      <nav class="nav-menu">
+        <button class="tab-btn active" data-tab="mover" onclick="switchTab('mover')">
+          <svg viewBox="0 0 24 24"><rect x="3" y="3" width="18" height="18" rx="2" ry="2"></rect><line x1="9" y1="3" x2="9" y2="21"></line></svg>
+          Chuyển Ứng Dụng
+        </button>
+        <button class="tab-btn" data-tab="storage" onclick="switchTab('storage')">
+          <svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="10"></circle><line x1="12" y1="2" x2="12" y2="12"></line><line x1="12" y1="12" x2="16" y2="16"></line></svg>
+          Phân Tích Bộ Nhớ
+        </button>
+        <button class="tab-btn" data-tab="stuck" onclick="switchTab('stuck')">
+          <svg viewBox="0 0 24 24"><path d="M21 12a9 9 0 1 1-9-9c2.39 0 4.59.94 6.21 2.45"></path><polyline points="21 4 21 12 13 12"></polyline></svg>
+          Bản cập nhật kẹt
+        </button>
+        <button class="tab-btn" data-tab="uninstall" onclick="switchTab('uninstall')">
+          <svg viewBox="0 0 24 24"><polyline points="3 6 5 6 21 6"></polyline><path d="M19 6l-1 14H6L5 6"></path><path d="M10 11v6"></path><path d="M14 11v6"></path><path d="M9 6V4h6v2"></path></svg>
+          Gỡ Ứng Dụng
+        </button>
+        <button class="tab-btn" data-tab="cleaner" onclick="switchTab('cleaner')">
+          <svg viewBox="0 0 24 24"><path d="M3 6h18"></path><path d="M8 6V4a1 1 0 0 1 1-1h6a1 1 0 0 1 1 1v2"></path><path d="M19 6l-.867 12.142A2 2 0 0 1 16.138 20H7.862a2 2 0 0 1-1.995-1.858L5 6"></path><path d="M10 11v5"></path><path d="M14 11v5"></path></svg>
+          Dọn Ổ Mac
+        </button>
+      </nav>
+      
+      <div class="sidebar-footer">
+        <span class="status-dot" id="status-indicator"></span>
+        <span id="global-status">Sẵn sàng</span>
+      </div>
+    </aside>
+    
+    <!-- Main Content -->
+    <main class="main-content">
+      
+      <!-- Tab 1: App Mover -->
+      <div id="mover-tab-content" class="tab-content active" style="height: 100%;">
+        <div class="mover-grid">
+          <!-- Apps List -->
+          <div class="card">
+            <div class="card-header">
+              <h3>Ứng dụng hệ thống</h3>
+              <div class="search-bar">
+                <input id="search" placeholder="Tìm ứng dụng...">
+                <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="11" cy="11" r="8"></circle><line x1="21" y1="21" x2="16.65" y2="16.65"></line></svg>
+              </div>
+            </div>
+            <div id="apps" class="list scrollable"></div>
+          </div>
+          
+          <!-- Dropzone and Preview -->
+          <div class="right-pane">
+            <div id="drop" class="drop-zone">
+              <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4M17 8l-5-5-5 5M12 3v12"/></svg>
+              <p>Thả tệp ứng dụng (.app) vào đây để bắt đầu</p>
+            </div>
+            
+            <div class="card preview-container">
+              <div class="card-header" style="border-bottom:none; padding-bottom:12px;">
+                <div class="preview-header">
+                  <div>
+                    <h4 id="pt">Chưa chọn ứng dụng</h4>
+                    <p id="ps">Chọn một ứng dụng từ danh sách bên trái hoặc thả tệp vào đây.</p>
+                  </div>
+                  <div class="preview-actions">
+                    <button id="move-data" class="btn-secondary" style="display:none" disabled>Chuyển dữ liệu</button>
+                    <button id="move" class="btn-primary" disabled>Chuyển ứng dụng</button>
+                  </div>
+                </div>
+              </div>
+              
+              <div id="items" class="preview-items scrollable font-mono" style="padding: 0 24px;"></div>
+              
+              <div class="actions-footer" style="padding: 16px 24px; margin-top: auto;">
+                <button class="btn-secondary" id="refresh">Làm mới</button>
+                <button class="btn-secondary" id="open">Mở Razer</button>
+                <span id="status" class="status-text text-muted">Sẵn sàng.</span>
+              </div>
+              
+              <div id="log" class="console-log scrollable font-mono" style="margin: 0 24px 24px 24px;"></div>
+            </div>
+          </div>
+        </div>
+      </div>
+      
+      <!-- Tab 2: Storage Analyzer -->
+      <div id="storage-tab-content" class="tab-content" style="height: 100%;">
+        <div class="storage-layout">
+          <!-- Dashboard -->
+          <div class="storage-dashboard">
+            <div class="dashboard-header">
+              <div class="drive-info">
+                <div class="drive-icon">
+                  <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="2" y="2" width="20" height="8" rx="2" ry="2"></rect><rect x="2" y="14" width="20" height="8" rx="2" ry="2"></rect><line x1="6" y1="6" x2="6.01" y2="6"></line><line x1="6" y1="18" x2="6.01" y2="18"></line></svg>
+                </div>
+                <div>
+                  <h4>Macintosh HD</h4>
+                  <p id="disk-used-text">Đang đo dung lượng...</p>
+                </div>
+              </div>
+              <button id="btn-rescan" class="btn-secondary" onclick="triggerScan()">Quét lại bộ nhớ</button>
+            </div>
+            
+            <div class="storage-bar-container" id="storage-bar"></div>
+            
+            <div class="legend-grid" id="storage-legend"></div>
+          </div>
+          
+          <!-- Scanning card (conditional) -->
+          <div id="scanning-progress-card" class="scanning-card" style="display: none;">
+            <div class="scanning-header-row">
+              <div class="spinner"></div>
+              <div>
+                <h5>Đang quét các tệp dung lượng lớn...</h5>
+                <p id="scanning-current">Phân tích hệ thống tệp tin</p>
+              </div>
+            </div>
+            <div class="progress-track">
+              <div id="scanning-progress-bar" class="progress-fill"></div>
+            </div>
+          </div>
+          
+          <!-- Details Grid -->
+          <div class="breakdown-grid">
+            <div class="category-cards" id="categories-list"></div>
+            
+            <div class="details-card">
+              <div class="details-title-bar">
+                <h4 id="details-title">Danh sách mục dung lượng lớn</h4>
+                <span id="details-count">0 mục</span>
+              </div>
+              <div class="details-rows scrollable" id="details-list">
+                <div class="empty-state">Chọn một danh mục bên trái để xem danh sách chi tiết các thư mục/file chiếm dung lượng.</div>
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+      
+
+      <!-- Tab 3: Stuck Updates -->
+      <div id="stuck-tab-content" class="tab-content" style="height: 100%;">
+        <div class="card" style="height: 100%; display: flex; flex-direction: column;">
+          <div class="card-header" style="padding: 18px 22px;">
+            <div>
+              <h3>Bản cập nhật bị kẹt</h3>
+              <p style="font-size:12px;color:var(--text-muted);margin-top:4px;">
+                App dùng Squirrel (Discord, GitHub Desktop, …) hoặc Sparkle (Stats, …) đôi khi tải bản mới về temp
+                nhưng không cài xong. Squirrel: <code style="font-family:var(--font-mono);">$TMPDIR/com.<i>tên</i>.ShipIt.<i>XXXX</i>/</code>.
+                Sparkle: <code style="font-family:var(--font-mono);">$TMPDIR/<i>TênApp</i>-update-<i>XXXX</i>/</code> (DMG mount).
+                Sparkle được <strong>tự khôi phục khi quét lại</strong>; Squirrel bấm <strong>Khôi phục</strong> để copy về ổ ngoài.
+              </p>
+            </div>
+            <button class="btn-secondary" id="stuck-refresh-btn" onclick="loadStuckUpdates()" style="font-size:12px;">
+              <svg viewBox="0 0 24 24" style="width:14px;height:14px;stroke:currentColor;fill:none;stroke-width:2;"><path d="M21 12a9 9 0 1 1-9-9c2.39 0 4.59.94 6.21 2.45"></path><polyline points="21 4 21 12 13 12"></polyline></svg>
+              Quét lại
+            </button>
+          </div>
+          <div id="stuck-list" class="scrollable" style="flex:1; padding: 0 4px 12px;">
+            <div class="uninstall-loading"><div class="spinner"></div>&nbsp;Đang quét...</div>
+          </div>
+          <div id="stuck-log" class="console-log scrollable font-mono" style="display:none; max-height: 200px; border-top: 1px solid var(--border);"></div>
+        </div>
+      </div>
+
+      <!-- Tab 4: App Uninstaller -->
+      <div id="uninstall-tab-content" class="tab-content" style="height: 100%;">
+        <div class="uninstall-layout">
+          <!-- Left: App list -->
+          <div class="card uninstall-app-list">
+            <div class="card-header" style="padding: 16px;">
+              <h3>Ứng dụng đã cài đặt</h3>
+            </div>
+            <div class="uninstall-search">
+              <input id="uninstall-search" placeholder="Tìm ứng dụng..." oninput="renderUninstallApps()">
+            </div>
+            <div id="uninstall-apps" class="scrollable" style="flex:1;"></div>
+          </div>
+
+          <!-- Right: Files detail + delete -->
+          <div class="card uninstall-detail">
+            <div class="uninstall-detail-header" id="uninstall-header">
+              <div class="uninstall-detail-title">
+                <h4>Chọn ứng dụng để xem chi tiết</h4>
+                <p>Danh sách file sẽ hiện ở đây sau khi chọn app.</p>
+              </div>
+              <div class="uninstall-actions">
+                <button class="btn-secondary" id="uninstall-select-all-btn" onclick="toggleSelectAll()" disabled style="font-size:12px;">Chọn tất cả</button>
+                <button class="btn-danger" id="uninstall-delete-btn" onclick="doUninstall()" disabled>
+                  <svg viewBox="0 0 24 24"><polyline points="3 6 5 6 21 6"></polyline><path d="M19 6l-1 14H6L5 6"></path></svg>
+                  Xóa đã chọn
+                </button>
+              </div>
+            </div>
+            <div id="uninstall-files" class="uninstall-files-list">
+              <div class="uninstall-empty">
+                <svg viewBox="0 0 24 24"><path d="M3 9l9-7 9 7v11a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z"></path><polyline points="9 22 9 12 15 12 15 22"></polyline></svg>
+                Chọn một ứng dụng để xem các file liên quan
+              </div>
+            </div>
+            <div class="uninstall-footer">
+              <div class="uninstall-sel-info" id="uninstall-sel-info">Chưa chọn ứng dụng nào</div>
+              <div id="uninstall-total-size" style="font-size:13px; color:var(--text-muted);"></div>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <!-- Tab 5: Dọn Ổ Mac (cache cleaner) -->
+      <div id="cleaner-tab-content" class="tab-content" style="height: 100%;">
+        <div class="cleaner-layout">
+          <div class="cleaner-toolbar">
+            <button class="btn-secondary" id="cleaner-scan-btn" onclick="triggerCleanerScan()">Quét cache &amp; rác</button>
+            <button class="btn-secondary" id="cleaner-sims-btn" onclick="deleteUnavailableSimulators()">Xóa simulator hỏng</button>
+            <span class="cleaner-scope-note">Chỉ dọn trên ổ Mac (không đụng ổ ngoài Razer)</span>
+            <div class="spacer"></div>
+            <span id="cleaner-summary" style="font-size:12.5px;color:var(--text-muted);"></span>
+          </div>
+
+          <div id="cleaner-scanning-card" class="scanning-card" style="display: none;">
+            <div class="scanning-header-row">
+              <div class="spinner"></div>
+              <div>
+                <h5>Đang quét cache &amp; thư mục thừa...</h5>
+                <p id="cleaner-scanning-current"></p>
+              </div>
+            </div>
+            <div class="progress-track">
+              <div id="cleaner-scanning-progress-bar" class="progress-fill"></div>
+            </div>
+          </div>
+
+          <div class="card uninstall-detail" style="flex:1;">
+            <div class="uninstall-detail-header">
+              <div class="uninstall-detail-title">
+                <h4>Cache &amp; thư mục thừa</h4>
+                <p id="cleaner-desc">Bấm "Quét cache &amp; rác" để bắt đầu.</p>
+              </div>
+              <div class="uninstall-actions">
+                <button class="btn-secondary" id="cleaner-select-all-btn" onclick="toggleCleanerSelectAll()" disabled style="font-size:12px;">Chọn tất cả (an toàn)</button>
+                <button class="btn-danger" id="cleaner-delete-btn" onclick="doCleanerClean()" disabled>
+                  <svg viewBox="0 0 24 24"><polyline points="3 6 5 6 21 6"></polyline><path d="M19 6l-1 14H6L5 6"></path></svg>
+                  Xóa đã chọn
+                </button>
+              </div>
+            </div>
+            <div id="cleaner-files" class="uninstall-files-list scrollable">
+              <div class="uninstall-empty">
+                <svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="10"></circle><line x1="12" y1="8" x2="12" y2="12"></line><line x1="12" y1="16" x2="12.01" y2="16"></line></svg>
+                Chưa quét. Bấm "Quét cache &amp; rác" để tìm các thư mục cache/log/rác có thể xóa an toàn trên ổ Mac.
+              </div>
+            </div>
+            <div class="uninstall-footer">
+              <div class="uninstall-sel-info" id="cleaner-sel-info">Chưa chọn mục nào</div>
+              <div id="cleaner-total-size" style="font-size:13px; color:var(--text-muted);"></div>
+            </div>
+          </div>
+          <div id="cleaner-log" class="console-log scrollable font-mono" style="display:none;"></div>
+        </div>
+      </div>
+
+    </main>
+  </div>
+
+  <script>
+    const $=id=>document.getElementById(id);
+    const S = {
+      apps: [],
+      volumes: [],
+      sel: null,
+      job: null,
+      activeTab: 'mover',
+      activeCategory: 'applications',
+      storageSummary: null,
+      storageTimer: null,
+      cleanerTimer: null
+    };
+
+    function addLog(t) {
+      const d = document.createElement('div');
+      d.textContent = '[' + new Date().toLocaleTimeString() + '] ' + t;
+      $('log').appendChild(d);
+      $('log').scrollTop = $('log').scrollHeight;
+    }
+
+    async function api(p, o) {
+      const r = await fetch(p, o);
+      const j = await r.json();
+      if(!r.ok || j.error) throw Error(j.error || r.status);
+      return j;
+    }
+
+    async function load() {
+      try {
+        const v = await api('/api/volumes');
+        S.volumes = v.volumes;
+        $('volume').innerHTML = S.volumes.map(x => `<option>${x}</option>`).join('');
+        const vol = encodeURIComponent($('volume').value);
+        S.apps = (await api('/api/apps?volume=' + vol)).apps;
+        renderApps();
+        addLog('Tìm thấy ' + S.apps.length + ' ứng dụng.');
+      } catch (e) {
+        addLog('Lỗi tải dữ liệu: ' + e.message);
+      }
+    }
+
+    async function reloadAppsForVolume() {
+      try {
+        const vol = encodeURIComponent($('volume').value);
+        S.apps = (await api('/api/apps?volume=' + vol)).apps;
+        renderApps();
+        if (S.sel) {
+          const fresh = S.apps.find(x => x.path === S.sel.path);
+          if (fresh) await selectApp(fresh);
+        }
+      } catch (e) {
+        addLog('Lỗi tải danh sách app: ' + e.message);
+      }
+    }
+
+    function formatPreviewItems(items) {
+      const pending = items.filter(i => !i.already_linked);
+      if (!pending.length) return 'Không còn mục nào cần chuyển.';
+      return pending.map(i => {
+        const tag = i.protected ? ' [sandbox→symlink sâu]' : '';
+        return i.size_human.padStart(9) + '  ' + i.label + tag + '\\n  ' + i.source + '\\n  -> ' + i.target;
+      }).join('\\n\\n');
+    }
+
+    function renderApps() {
+      const n = $('search').value.toLowerCase();
+      const root = $('apps');
+      root.innerHTML = '';
+      S.apps.filter(a => (a.name + ' ' + a.bundle_id).toLowerCase().includes(n)).forEach(a => {
+        const e = document.createElement('div');
+        e.className = 'app-item' + (S.sel && S.sel.path === a.path ? ' selected' : '');
+        e.draggable = true;
+        e.innerHTML = '<div class="app-item-main"><div class="name"></div><div class="meta"></div></div>';
+        e.querySelector('.name').textContent = a.name + (a.already_linked ? ' -> đã chuyển' : '') + (a.has_pending_data ? ' (còn data)' : '');
+        e.querySelector('.meta').textContent = a.bundle_id || a.path;
+        e.onclick = () => selectApp(a);
+        e.ondragstart = ev => {
+          ev.dataTransfer.setData('text/plain', a.path);
+          selectApp(a);
+        };
+        if (a.has_pending_data) {
+          const btn = document.createElement('button');
+          btn.className = 'btn-move-data-inline';
+          btn.textContent = 'Chuyển dữ liệu';
+          btn.onclick = (ev) => {
+            ev.stopPropagation();
+            selectApp(a).then(() => moveData());
+          };
+          e.appendChild(btn);
+        }
+        root.appendChild(e);
+      });
+    }
+
+    async function selectApp(a) {
+      S.sel = a;
+      renderApps();
+      $('pt').textContent = a.name;
+      $('ps').textContent = 'Đang quét dung lượng...';
+      $('move').disabled = true;
+      $('move-data').disabled = true;
+      $('move').style.display = a.already_linked ? 'none' : '';
+      $('move-data').style.display = (a.already_linked && a.has_pending_data) ? '' : 'none';
+      try {
+        const vol = encodeURIComponent($('volume').value);
+        const path = encodeURIComponent(a.path);
+        let j;
+        if (a.already_linked && a.has_pending_data) {
+          j = await api('/api/preview-data?app_path=' + path + '&volume=' + vol);
+          $('ps').textContent = j.pending_count + ' mục dữ liệu ~/Library, ' + j.total_size_human + '. Lưu tại: ' + j.library_root;
+          $('move-data').disabled = j.pending_count === 0;
+        } else if (a.already_linked) {
+          j = await api('/api/preview?app_path=' + path + '&volume=' + vol);
+          $('ps').textContent = 'App đã chuyển sang ổ ngoài. Không còn dữ liệu ~/Library cần chuyển.';
+        } else {
+          j = await api('/api/preview?app_path=' + path + '&volume=' + vol);
+          $('ps').textContent = j.pending_count + ' mục cần chuyển, khoảng ' + j.total_size_human + '. Đích: ' + j.target_root;
+          $('move').disabled = j.pending_count === 0;
+        }
+        $('items').textContent = formatPreviewItems(j.items || []);
+      } catch (e) {
+        $('ps').textContent = 'Lỗi preview: ' + e.message;
+      }
+    }
+
+    async function moveData() {
+      if (!S.sel || !S.sel.has_pending_data) return;
+      const msg =
+        'Chuyển dữ liệu của "' + S.sel.name + '" sang ' + $('volume').value + '/MacAppMover/UserLibrary/?\\n\\n' +
+        'Sẽ copy toàn bộ ~/Library liên quan (kể cả Containers/Docker.raw) sang ổ ngoài, rồi symlink để giải phóng ổ Mac.\\n' +
+        'Ứng dụng sẽ được tự động đóng trước khi chuyển.\\nỔ ngoài phải được cắm khi mở lại app.';
+      if (!confirm(msg)) return;
+      $('move-data').disabled = true;
+      try {
+        const j = await api('/api/move-data', {
+          method: 'POST',
+          headers: {'Content-Type': 'application/json'},
+          body: JSON.stringify({app_path: S.sel.path, volume: $('volume').value})
+        });
+        S.job = j.job_id;
+        pollJob();
+      } catch (e) {
+        addLog('Lỗi chuyển dữ liệu: ' + e.message);
+        $('move-data').disabled = false;
+      }
+    }
+
+    async function move() {
+      if(!S.sel || !confirm('Chuyển ' + S.sel.name + ' sang ' + $('volume').value + '?\\n\\nSẽ chuyển cả app + dữ liệu ~/Library (gồm Containers nếu có).\\nỨng dụng sẽ được tự động đóng.\\nỔ ngoài phải được cắm khi mở lại app.')) return;
+      $('move').disabled = true;
+      $('move-data').disabled = true;
+      try {
+        const j = await api('/api/move', {
+          method: 'POST',
+          headers: {'Content-Type': 'application/json'},
+          body: JSON.stringify({app_path: S.sel.path, volume: $('volume').value})
+        });
+        S.job = j.job_id;
+        pollJob();
+      } catch (e) {
+        addLog('Lỗi di chuyển: ' + e.message);
+        $('move').disabled = false;
+        if (S.sel && S.sel.has_pending_data) $('move-data').disabled = false;
+      }
+    }
+
+    async function pollJob() {
+      try {
+        const j = await api('/api/job?id=' + S.job);
+        $('status').textContent = j.status_text || j.status;
+        $('log').innerHTML = '';
+        j.logs.forEach(addLog);
+        if(j.status === 'running') {
+          setTimeout(pollJob, 900);
+        } else {
+          $('move').disabled = false;
+          $('move-data').disabled = false;
+          if(j.status === 'done') load();
+        }
+      } catch (e) {
+        addLog('Lỗi theo dõi tiến trình: ' + e.message);
+        $('move').disabled = false;
+        $('move-data').disabled = false;
+      }
+    }
+
+    function switchTab(tabId) {
+      S.activeTab = tabId;
+      document.querySelectorAll('.tab-btn').forEach(btn => {
+        if(btn.dataset.tab === tabId) btn.classList.add('active');
+        else btn.classList.remove('active');
+      });
+
+      ['mover-tab-content', 'storage-tab-content', 'stuck-tab-content', 'uninstall-tab-content', 'cleaner-tab-content']
+        .forEach(id => $(id).classList.remove('active'));
+
+      if(tabId !== 'storage' && S.storageTimer) { clearInterval(S.storageTimer); S.storageTimer = null; }
+      if(tabId !== 'cleaner' && S.cleanerTimer) { clearInterval(S.cleanerTimer); S.cleanerTimer = null; }
+
+      if(tabId === 'mover') {
+        $('mover-tab-content').classList.add('active');
+      } else if(tabId === 'storage') {
+        $('storage-tab-content').classList.add('active');
+        pollStorageStatus();
+        S.storageTimer = setInterval(pollStorageStatus, 1500);
+      } else if(tabId === 'stuck') {
+        $('stuck-tab-content').classList.add('active');
+        loadStuckUpdates();
+      } else if(tabId === 'uninstall') {
+        $('uninstall-tab-content').classList.add('active');
+        if(S.apps.length > 0) renderUninstallApps();
+        else load().then(() => renderUninstallApps());
+      } else if(tabId === 'cleaner') {
+        $('cleaner-tab-content').classList.add('active');
+        pollCleanerStatus();
+        S.cleanerTimer = setInterval(pollCleanerStatus, 1200);
+      }
+    }
+
+    async function pollStorageStatus() {
+      try {
+        const status = await api('/api/storage/status');
+        const indicator = $('status-indicator');
+        
+        if(status.status === 'scanning') {
+          indicator.className = 'status-dot loading';
+          $('global-status').textContent = 'Đang quét bộ nhớ';
+          $('scanning-progress-card').style.display = 'flex';
+          $('scanning-current').textContent = status.current_item || '';
+          $('scanning-progress-bar').style.width = (status.progress * 100) + '%';
+        } else {
+          indicator.className = 'status-dot';
+          $('global-status').textContent = 'Sẵn sàng';
+          $('scanning-progress-card').style.display = 'none';
+        }
+        
+        if(status.summary && status.summary.total) {
+          S.storageSummary = status.summary;
+          renderStorageDashboard();
+        }
+      } catch (e) {
+        console.error('Lỗi lấy trạng thái bộ nhớ:', e);
+      }
+    }
+
+    async function triggerScan() {
+      try {
+        await api('/api/storage/scan', {method: 'POST'});
+        pollStorageStatus();
+      } catch(e) {
+        alert('Lỗi kích hoạt quét: ' + e.message);
+      }
+    }
+
+    function renderStorageDashboard() {
+      const sum = S.storageSummary;
+      if(!sum) return;
+      
+      $('disk-used-text').textContent = `${sum.used_human} trên tổng số ${sum.total_human} (Còn trống ${sum.free_human})`;
+      
+      // Render storage bar
+      const bar = $('storage-bar');
+      bar.innerHTML = '';
+      
+      const cats = sum.categories;
+      const total = sum.total;
+      
+      // Render legend
+      const legend = $('storage-legend');
+      legend.innerHTML = '';
+      
+      Object.keys(cats).forEach(key => {
+        const c = cats[key];
+        const pct = (c.size / total) * 100;
+        if(pct > 0.5) {
+          const seg = document.createElement('div');
+          seg.className = `bar-segment`;
+          seg.style.width = pct + '%';
+          seg.style.backgroundColor = c.color;
+          seg.title = `${c.label}: ${c.size_human} (${pct.toFixed(1)}%)`;
+          bar.appendChild(seg);
+        }
+        
+        // Legend item
+        const item = document.createElement('div');
+        item.className = 'legend-item';
+        item.onclick = () => selectCategory(key);
+        item.innerHTML = `
+          <span class="legend-dot" style="background-color: ${c.color}"></span>
+          <span>${c.label}</span>
+          <span class="size">${c.size_human}</span>
+        `;
+        legend.appendChild(item);
+      });
+      
+      // Free space bar segment
+      const freePct = (sum.free / total) * 100;
+      if(freePct > 0.5) {
+        const seg = document.createElement('div');
+        seg.className = 'bar-segment';
+        seg.style.width = freePct + '%';
+        seg.style.backgroundColor = '#1f2436';
+        seg.title = `Còn trống: ${sum.free_human} (${freePct.toFixed(1)}%)`;
+        bar.appendChild(seg);
+      }
+      
+      // Free space legend
+      const freeItem = document.createElement('div');
+      freeItem.className = 'legend-item';
+      freeItem.innerHTML = `
+        <span class="legend-dot free"></span>
+        <span>Còn trống</span>
+        <span class="size">${sum.free_human}</span>
+      `;
+      legend.appendChild(freeItem);
+      
+      // Render category cards
+      const cardsRoot = $('categories-list');
+      const prevActive = S.activeCategory;
+      cardsRoot.innerHTML = '';
+      
+      Object.keys(cats).forEach(key => {
+        const c = cats[key];
+        const card = document.createElement('div');
+        card.className = 'category-card' + (prevActive === key ? ' active' : '');
+        card.onclick = () => selectCategory(key);
+        card.innerHTML = `
+          <div class="category-card-info">
+            <span class="legend-dot" style="background-color: ${c.color}"></span>
+            <div>
+              <h5>${c.label}</h5>
+              <p>${((c.size / sum.used) * 100).toFixed(1)}% dung lượng dùng</p>
+            </div>
+          </div>
+          <span class="size">${c.size_human}</span>
+        `;
+        cardsRoot.appendChild(card);
+      });
+      
+      // Ensure active category details loaded
+      if(S.activeCategory) {
+        loadCategoryDetails(S.activeCategory);
+      }
+    }
+
+    async function selectCategory(key) {
+      S.activeCategory = key;
+      document.querySelectorAll('.category-card').forEach((c, idx) => {
+        const k = Object.keys(S.storageSummary.categories)[idx];
+        if(k === key) c.classList.add('active');
+        else c.classList.remove('active');
+      });
+      loadCategoryDetails(key);
+    }
+
+    async function loadCategoryDetails(key) {
+      const c = S.storageSummary.categories[key];
+      $('details-title').textContent = `Chi tiết: ${c.label}`;
+      
+      try {
+        const res = await api('/api/storage/details?category=' + key);
+        const root = $('details-list');
+        root.innerHTML = '';
+        
+        if(!res.items || res.items.length === 0) {
+          root.innerHTML = '<div class="empty-state">Không có tệp/thư mục nào lớn hơn 0 B.</div>';
+          $('details-count').textContent = '0 mục';
+          return;
+        }
+        
+        $('details-count').textContent = res.items.length + ' mục';
+        
+        // Find largest item
+        const maxVal = res.items[0].size || 1;
+        
+        res.items.forEach(i => {
+          const row = document.createElement('div');
+          row.className = 'detail-row';
+          const pct = (i.size / maxVal) * 100;
+          
+          row.innerHTML = `
+            <div class="detail-row-header">
+              <span class="detail-row-name">${i.name}</span>
+              <span class="detail-row-size">${i.size_human}</span>
+            </div>
+            <div class="detail-row-path">${i.path}</div>
+            <div class="detail-progress-track">
+              <div class="detail-progress-fill" style="width: ${pct}%; background-color: ${c.color}"></div>
+            </div>
+          `;
+          root.appendChild(row);
+        });
+      } catch (e) {
+        $('details-list').innerHTML = `<div class="empty-state" style="color:var(--error)">Lỗi: ${e.message}</div>`;
+      }
+    }
+
+    $('search').oninput = renderApps;
+    $('refresh').onclick = load;
+    $('move').onclick = move;
+    $('move-data').onclick = moveData;
+    $('volume').onchange = () => {
+      reloadAppsForVolume();
+      if(S.activeTab === 'stuck') loadStuckUpdates();
+    };
+    $('open').onclick = () => api('/api/open-folder', {
+      method: 'POST',
+      headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify({volume: $('volume').value})
+    }).catch(e => addLog(e.message));
+
+    const d = $('drop');
+    d.ondragover = e => { e.preventDefault(); d.classList.add('hot'); };
+    d.ondragleave = () => d.classList.remove('hot');
+    d.ondrop = e => {
+      e.preventDefault();
+      d.classList.remove('hot');
+      const p = e.dataTransfer.getData('text/plain');
+      const a = S.apps.find(x => x.path === p);
+      if(a) selectApp(a).then(move);
+    };
+
+
+    // ===== STUCK UPDATES TAB =====
+    const SU = {
+      items: [],
+      recovered: [],
+      job: null,
+      busy: new Set(),
+    };
+
+    function formatStuckTime(iso) {
+      if (!iso) return '';
+      const d = new Date(iso);
+      if (isNaN(d.getTime())) return iso;
+      const pad = (n) => String(n).padStart(2, '0');
+      return pad(d.getDate()) + '/' + pad(d.getMonth() + 1) + '/' + d.getFullYear() +
+        ' ' + pad(d.getHours()) + ':' + pad(d.getMinutes());
+    }
+
+    function stuckSymlinkBadge(health) {
+      const map = {
+        symlink: { cls: 'symlink', text: 'symlink ổn' },
+        local:   { cls: 'local',   text: 'folder thật (chưa move)' },
+        broken:  { cls: 'broken',  text: 'symlink hỏng' },
+        missing: { cls: 'missing', text: 'chưa có symlink' },
+      };
+      return map[health] || { cls: 'missing', text: health || 'không rõ' };
+    }
+
+    async function loadStuckUpdates() {
+      const root = $('stuck-list');
+      root.innerHTML = '<div class="uninstall-loading"><div class="spinner"></div>&nbsp;Đang quét bản cập nhật bị kẹt...</div>';
+      try {
+        const res = await api('/api/stuck-updates?volume=' + encodeURIComponent($('volume').value));
+        SU.items = res.items || [];
+        SU.recovered = res.recovered || [];
+        const log = $('stuck-log');
+        if (SU.recovered.length || (res.recover_logs && res.recover_logs.length)) {
+          log.style.display = 'block';
+          log.innerHTML = '';
+          if (SU.recovered.length) {
+            addStuckLog('Đã tự khôi phục ' + SU.recovered.length + ' bản Sparkle: ' +
+              SU.recovered.map(function (i) { return i.display_name || i.app_name; }).join(', '));
+          }
+          (res.recover_logs || []).forEach(addStuckLog);
+        }
+        renderStuckItems();
+      } catch (e) {
+        root.innerHTML = '<div class="uninstall-empty" style="color:var(--error)"></div>';
+        root.firstChild.textContent = 'Lỗi: ' + e.message;
+      }
+    }
+
+    function renderStuckItems() {
+      const root = $('stuck-list');
+      root.innerHTML = '';
+
+      const summary = document.createElement('div');
+      summary.className = 'stuck-summary';
+      if (!SU.items.length) {
+        if (SU.recovered && SU.recovered.length) {
+          summary.innerHTML = '<svg viewBox="0 0 24 24" style="width:16px;height:16px;stroke:#10b981;fill:none;stroke-width:2;"><polyline points="20 6 9 17 4 12"></polyline></svg> <span>Đã tự khôi phục <strong>' +
+            SU.recovered.length + '</strong> bản Sparkle. Không còn bản cập nhật bị kẹt.</span>';
+        } else {
+          summary.innerHTML = '<svg viewBox="0 0 24 24" style="width:16px;height:16px;stroke:#10b981;fill:none;stroke-width:2;"><polyline points="20 6 9 17 4 12"></polyline></svg> <span>Không có bản cập nhật bị kẹt. Mọi thứ đều ổn.</span>';
+        }
+        root.appendChild(summary);
+        return;
+      }
+      const uniqueApps = new Set(SU.items.map((i) => i.bundle_id));
+      const totalSize = SU.items.reduce((s, i) => s + (i.size || 0), 0);
+      summary.innerHTML =
+        '<svg viewBox="0 0 24 24" style="width:16px;height:16px;stroke:#fbbf24;fill:none;stroke-width:2;">' +
+        '<path d="M10.29 3.86L1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0z"></path>' +
+        '<line x1="12" y1="9" x2="12" y2="13"></line><line x1="12" y1="17" x2="12.01" y2="17"></line></svg>' +
+        '<span>Có <strong>' + SU.items.length + ' bản</strong> của <strong>' + uniqueApps.size + ' ứng dụng</strong> bị kẹt, tổng ' +
+        humanSize(totalSize) + '.</span>';
+      root.appendChild(summary);
+
+      SU.items.forEach(function (item) {
+        const row = document.createElement('div');
+        row.className = 'stuck-item';
+
+        const icon = document.createElement('div');
+        icon.className = 'stuck-item-icon';
+        icon.innerHTML = '<svg viewBox="0 0 24 24"><path d="M21 12a9 9 0 1 1-9-9c2.39 0 4.59.94 6.21 2.45"></path><polyline points="21 4 21 12 13 12"></polyline></svg>';
+
+        const info = document.createElement('div');
+        info.className = 'stuck-item-info';
+        const nameLine = document.createElement('div');
+        nameLine.className = 'stuck-item-name';
+        const appName = document.createElement('span');
+        appName.textContent = item.display_name || item.app_name;
+        const badge = stuckSymlinkBadge(item.symlink_health);
+        const bundleLine = document.createElement('span');
+        bundleLine.className = 'stuck-badge ' + badge.cls;
+        bundleLine.textContent = badge.text;
+        const sizeBadge = document.createElement('span');
+        sizeBadge.className = 'stuck-badge';
+        sizeBadge.style.background = 'rgba(255,255,255,0.06)';
+        sizeBadge.style.color = 'var(--text-muted)';
+        sizeBadge.style.border = '1px solid var(--border)';
+        sizeBadge.textContent = (item.update_kind === 'sparkle' ? 'Sparkle' : 'ShipIt') + ': ' + item.size_human + ' • tải lúc ' + formatStuckTime(item.temp_mtime);
+        nameLine.appendChild(appName);
+        nameLine.appendChild(bundleLine);
+        nameLine.appendChild(sizeBadge);
+
+        const bundle = document.createElement('div');
+        bundle.className = 'stuck-item-bundle';
+        bundle.textContent = item.bundle_id || '(không đọc được bundle ID)';
+
+        const paths = document.createElement('div');
+        paths.className = 'stuck-item-paths';
+        paths.innerHTML =
+          '<div>Bản kẹt: <code>' + escapeHtml(item.stuck_path) + '</code></div>' +
+          '<div>Thư mục temp: <code>' + escapeHtml(item.temp_dir) + '</code></div>' +
+          '<div>Sẽ cài về: <code>' + escapeHtml(item.target_path) + '</code> ' +
+          '(hiện tại: ' + (item.target_exists ? item.target_size_human : '<em style="color:#f87171">không có</em>') + ')</div>' +
+          (item.symlink_path ? '<div>Symlink: <code>' + escapeHtml(item.symlink_path) + '</code></div>' : '');
+
+        info.appendChild(nameLine);
+        info.appendChild(bundle);
+        info.appendChild(paths);
+
+        const actions = document.createElement('div');
+        actions.className = 'stuck-item-actions';
+        const btn = document.createElement('button');
+        btn.className = 'btn-recover';
+        btn.textContent = 'Khôi phục';
+        btn.disabled = !!SU.job || SU.busy.has(item.temp_dir);
+        btn.onclick = function () { recoverStuckUpdate(item, btn, delBtn); };
+        const delBtn = document.createElement('button');
+        delBtn.className = 'btn-delete-stuck';
+        delBtn.textContent = 'Xóa';
+        delBtn.disabled = !!SU.job || SU.busy.has(item.temp_dir);
+        delBtn.onclick = function () { deleteStuckUpdate(item, btn, delBtn); };
+        actions.appendChild(btn);
+        actions.appendChild(delBtn);
+
+        row.appendChild(icon);
+        row.appendChild(info);
+        row.appendChild(actions);
+        root.appendChild(row);
+      });
+    }
+
+    function escapeHtml(value) {
+      return String(value)
+        .replace(/&/g, '&amp;')
+        .replace(/</g, '&lt;')
+        .replace(/>/g, '&gt;')
+        .replace(/"/g, '&quot;')
+        .replace(/'/g, '&#39;');
+    }
+
+    function humanSize(numBytes) {
+      let value = Number(numBytes) || 0;
+      for (const unit of ['B', 'KB', 'MB', 'GB', 'TB']) {
+        if (value < 1024 || unit === 'TB') {
+          return unit === 'B' ? value + ' ' + unit : value.toFixed(1) + ' ' + unit;
+        }
+        value /= 1024;
+      }
+      return numBytes + ' B';
+    }
+
+    function addStuckLog(text) {
+      const log = $('stuck-log');
+      log.style.display = 'block';
+      const line = document.createElement('div');
+      line.textContent = '[' + new Date().toLocaleTimeString() + '] ' + text;
+      log.appendChild(line);
+      log.scrollTop = log.scrollHeight;
+    }
+
+    async function deleteStuckUpdate(item, recoverBtn, deleteBtn) {
+      if (SU.job) return;
+      const msg =
+        "Xóa bản cập nhật bị kẹt \\\"" + (item.display_name || item.app_name) + "\\\"?\\n\\n" +
+        "Chỉ xóa file tạm trong temp/DMG mount — app đang cài sẽ không bị thay đổi.\\n" +
+        "Dùng khi bạn không muốn cài bản mới này.";
+      if (!confirm(msg)) return;
+      SU.busy.add(item.temp_dir);
+      if (recoverBtn) recoverBtn.disabled = true;
+      deleteBtn.disabled = true;
+      deleteBtn.textContent = 'Đang xóa...';
+      addStuckLog('Bat dau xoa: ' + item.display_name);
+      try {
+        const res = await api('/api/delete-stuck-update', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ temp_dir: item.temp_dir }),
+        });
+        SU.job = res.job_id;
+        pollStuckJob(item.temp_dir, recoverBtn, deleteBtn, 'Xóa', 'Khôi phục');
+      } catch (e) {
+        SU.busy.delete(item.temp_dir);
+        if (recoverBtn) recoverBtn.disabled = false;
+        deleteBtn.disabled = false;
+        deleteBtn.textContent = 'Xóa';
+        addStuckLog('Loi: ' + e.message);
+      }
+    }
+
+    async function recoverStuckUpdate(item, btn, deleteBtn) {
+      if (SU.job) return;
+      const msg =
+        "Khôi phục bản cập nhật \\\"" + (item.display_name || item.app_name) + "\\\" về ổ ngoài?\\n\\n" +
+        "Bản hiện tại trên ổ ngoài" + (item.target_exists ? " sẽ được backup sang MacAppMover/StuckUpdateBackups/" : "") + ".\\n" +
+        "Bản kẹt trong temp sẽ được copy sang đúng vị trí và xóa khỏi temp.\\n\\n" +
+        "App sẽ tự nhận bản mới khi mở (nên mở app 1 lần).";
+      if (!confirm(msg)) return;
+      SU.busy.add(item.temp_dir);
+      btn.disabled = true;
+      if (deleteBtn) deleteBtn.disabled = true;
+      btn.textContent = 'Đang xử lý...';
+      addStuckLog('Bat dau khoi phuc: ' + item.display_name);
+      try {
+        const res = await api('/api/recover-stuck-update', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            volume: $('volume').value,
+            temp_dir: item.temp_dir,
+          }),
+        });
+        SU.job = res.job_id;
+        pollStuckJob(item.temp_dir, btn, null, 'Khôi phục', 'Khôi phục');
+      } catch (e) {
+        SU.busy.delete(item.temp_dir);
+        btn.disabled = false;
+        if (deleteBtn) deleteBtn.disabled = false;
+        btn.textContent = 'Khôi phục';
+        addStuckLog('Loi: ' + e.message);
+      }
+    }
+
+    async function pollStuckJob(tempDir, primaryBtn, secondaryBtn, primaryLabel, secondaryLabel) {
+      primaryLabel = primaryLabel || 'Khôi phục';
+      secondaryLabel = secondaryLabel || 'Xóa';
+      try {
+        const job = await api('/api/job?id=' + SU.job);
+        const log = $('stuck-log');
+        log.innerHTML = '';
+        job.logs.forEach(addStuckLog);
+        if (job.status === 'running') {
+          setTimeout(function () { pollStuckJob(tempDir, primaryBtn, secondaryBtn, primaryLabel, secondaryLabel); }, 800);
+          return;
+        }
+        SU.job = null;
+        SU.busy.delete(tempDir);
+        if (job.status === 'done') {
+          addStuckLog('Hoan thanh.');
+          await loadStuckUpdates();
+        } else {
+          if (primaryBtn) {
+            primaryBtn.disabled = false;
+            primaryBtn.textContent = primaryLabel;
+          }
+          if (secondaryBtn) {
+            secondaryBtn.disabled = false;
+            secondaryBtn.textContent = secondaryLabel;
+          }
+        }
+      } catch (e) {
+        SU.job = null;
+        SU.busy.delete(tempDir);
+        if (primaryBtn) {
+          primaryBtn.disabled = false;
+          primaryBtn.textContent = primaryLabel;
+        }
+        if (secondaryBtn) {
+          secondaryBtn.disabled = false;
+          secondaryBtn.textContent = secondaryLabel;
+        }
+        addStuckLog('Loi theo doi tien trinh: ' + e.message);
+      }
+    }
+
+    // ===== UNINSTALL TAB =====
+    const UI = {
+      selUninstallApp: null,
+      uninstallFiles: [],
+      checkedPaths: new Set(),
+    };
+
+    function renderUninstallApps() {
+      const q = ($('uninstall-search').value || '').toLowerCase();
+      const root = $('uninstall-apps');
+      root.innerHTML = '';
+      if (!S.apps || !S.apps.length) {
+        root.innerHTML = '<div style="padding:20px;text-align:center;color:var(--text-muted);font-size:13px;">Đang tải...</div>';
+        return;
+      }
+      const filtered = S.apps.filter(a =>
+        (a.name + ' ' + (a.bundle_id || '')).toLowerCase().includes(q)
+      );
+      if (!filtered.length) {
+        root.innerHTML = '<div style="padding:20px;text-align:center;color:var(--text-muted);font-size:13px;">Không tìm thấy.</div>';
+        return;
+      }
+      filtered.forEach(a => {
+        const el = document.createElement('div');
+        el.className = 'uninstall-app-item' + (UI.selUninstallApp && UI.selUninstallApp.path === a.path ? ' selected' : '');
+        const badge = a.already_linked ? '<span class="badge-linked">symlink</span>' : '';
+        el.innerHTML =
+          '<div class="uninstall-app-icon">&#128230;</div>' +
+          '<div class="uninstall-app-info">' +
+            '<div class="uninstall-app-name">' + (a.name || a.display_name) + '</div>' +
+            '<div class="uninstall-app-meta">' + (a.bundle_id || a.path) + '</div>' +
+          '</div>' + badge;
+        el.onclick = function() { selectUninstallApp(a); };
+        root.appendChild(el);
+      });
+    }
+
+    async function selectUninstallApp(a) {
+      UI.selUninstallApp = a;
+      UI.uninstallFiles = [];
+      UI.checkedPaths = new Set();
+      renderUninstallApps();
+
+      $('uninstall-files').innerHTML = '<div class="uninstall-loading"><div class="spinner"></div>&nbsp;Đang quét file liên quan...</div>';
+      $('uninstall-delete-btn').disabled = true;
+      $('uninstall-select-all-btn').disabled = true;
+      $('uninstall-sel-info').textContent = 'Đang quét...';
+      $('uninstall-total-size').textContent = '';
+      $('uninstall-header').querySelector('h4').textContent = a.name;
+      $('uninstall-header').querySelector('p').textContent = 'Đang phân tích...';
+
+      try {
+        const res = await api('/api/app-files?app_path=' + encodeURIComponent(a.path));
+        UI.uninstallFiles = res.files || [];
+        UI.checkedPaths = new Set(UI.uninstallFiles.map(function(f) { return f.path; }));
+        $('uninstall-header').querySelector('p').textContent = res.files.length + ' mục liên quan - Tổng: ' + res.total_size_human;
+        $('uninstall-total-size').textContent = 'Tổng: ' + res.total_size_human;
+        renderUninstallFileList();
+        $('uninstall-select-all-btn').disabled = false;
+      } catch(e) {
+        $('uninstall-files').innerHTML = '<div class="uninstall-empty" style="color:var(--error)">' + e.message + '</div>';
+      }
+    }
+
+    function renderUninstallFileList() {
+      const root = $('uninstall-files');
+      root.innerHTML = '';
+
+      if (!UI.uninstallFiles.length) {
+        root.innerHTML = '<div class="uninstall-empty">Không tìm thấy file liên quan.</div>';
+        $('uninstall-delete-btn').disabled = true;
+        return;
+      }
+
+      // Check-all row
+      const allRow = document.createElement('div');
+      allRow.className = 'check-all-row';
+      const allChk = document.createElement('input');
+      allChk.type = 'checkbox';
+      allChk.className = 'file-checkbox';
+      allChk.checked = UI.checkedPaths.size === UI.uninstallFiles.length;
+      allChk.onchange = function() {
+        if (allChk.checked) {
+          UI.checkedPaths = new Set(UI.uninstallFiles.map(function(f) { return f.path; }));
+        } else {
+          UI.checkedPaths = new Set();
+        }
+        renderUninstallFileList();
+      };
+      allRow.appendChild(allChk);
+      const allLabel = document.createElement('span');
+      allLabel.textContent = 'Chon / Bo chon tat ca (' + UI.uninstallFiles.length + ' muc)';
+      allLabel.style.cursor = 'pointer';
+      allLabel.onclick = function() { allChk.checked = !allChk.checked; allChk.onchange(); };
+      allRow.appendChild(allLabel);
+      root.appendChild(allRow);
+
+      const maxSize = (UI.uninstallFiles[0] && UI.uninstallFiles[0].size) || 1;
+
+      UI.uninstallFiles.forEach(function(f) {
+        const item = document.createElement('div');
+        const isChecked = UI.checkedPaths.has(f.path);
+        item.className = 'uninstall-file-item' + (isChecked ? ' checked' : '');
+
+        const chk = document.createElement('input');
+        chk.type = 'checkbox';
+        chk.className = 'file-checkbox';
+        chk.checked = isChecked;
+        chk.onclick = function(e) { e.stopPropagation(); };
+        chk.onchange = function() {
+          if (chk.checked) UI.checkedPaths.add(f.path);
+          else UI.checkedPaths.delete(f.path);
+          item.classList.toggle('checked', chk.checked);
+          updateDeleteBtn();
+        };
+
+        const pct = Math.max(2, (f.size / maxSize) * 100);
+        const isBundleClass = f.category === 'App Bundle' ? ' app-bundle' : '';
+        const symlinkNote = f.is_symlink
+          ? '<div class="file-item-symlink">symlink - ' + (f.symlink_target || '') + '</div>'
+          : '';
+
+        const info = document.createElement('div');
+        info.className = 'file-item-info';
+        info.innerHTML =
+          '<div class="file-item-header">' +
+            '<span class="file-item-name">' + f.name + '</span>' +
+            '<span class="file-item-category' + isBundleClass + '">' + f.category + '</span>' +
+            '<span class="file-item-size">' + f.size_human + '</span>' +
+          '</div>' +
+          '<div class="file-item-path">' + f.path + '</div>' +
+          symlinkNote +
+          '<div class="file-progress-bar">' +
+            '<div class="file-progress-fill" style="width:' + pct + '%"></div>' +
+          '</div>';
+
+        item.appendChild(chk);
+        item.appendChild(info);
+        item.onclick = function() { chk.checked = !chk.checked; chk.onchange(); };
+        root.appendChild(item);
+      });
+
+      updateDeleteBtn();
+    }
+
+    function updateDeleteBtn() {
+      const n = UI.checkedPaths.size;
+      $('uninstall-delete-btn').disabled = n === 0;
+      $('uninstall-sel-info').innerHTML = n > 0
+        ? 'Da chon <span>' + n + ' muc</span> de xoa'
+        : 'Chua chon muc nao';
+    }
+
+    function toggleSelectAll() {
+      if (UI.checkedPaths.size === UI.uninstallFiles.length) {
+        UI.checkedPaths = new Set();
+      } else {
+        UI.checkedPaths = new Set(UI.uninstallFiles.map(function(f) { return f.path; }));
+      }
+      renderUninstallFileList();
+    }
+
+    async function doUninstall() {
+      const app = UI.selUninstallApp;
+      if (!app || UI.checkedPaths.size === 0) return;
+
+      const paths = Array.from(UI.checkedPaths);
+      const preview = paths.slice(0, 5).join('\\n') + (paths.length > 5 ? '\\n... va ' + (paths.length - 5) + ' muc khac' : '');
+      const confirmed = confirm(
+        'XOA VINH VIEN ' + paths.length + ' FILE/FOLDER cua "' + app.name + '"?\\n\\n' +
+        preview + '\\n\\nHanh dong nay KHONG THE HOAN TAC!'
+      );
+      if (!confirmed) return;
+
+      $('uninstall-delete-btn').disabled = true;
+      $('uninstall-select-all-btn').disabled = true;
+      $('uninstall-files').innerHTML = '<div class="uninstall-loading"><div class="spinner"></div>&nbsp;Dang xoa...</div>';
+
+      try {
+        const res = await api('/api/app-delete', {
+          method: 'POST',
+          headers: {'Content-Type': 'application/json'},
+          body: JSON.stringify({paths: paths}),
+        });
+
+        const root = $('uninstall-files');
+        root.innerHTML = '';
+        let okCount = 0, failCount = 0;
+
+        res.results.forEach(function(r) {
+          const row = document.createElement('div');
+          row.className = 'uninstall-result-row ' + (r.ok ? 'ok' : 'fail');
+          const icon = document.createElement('span');
+          icon.textContent = r.ok ? 'OK' : 'FAIL';
+          const pathSpan = document.createElement('span');
+          pathSpan.textContent = r.path;
+          pathSpan.style.cssText = 'flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;';
+          const noteSpan = document.createElement('span');
+          noteSpan.textContent = r.note;
+          noteSpan.style.cssText = 'flex-shrink:0;color:var(--text-muted)';
+          row.appendChild(icon);
+          row.appendChild(pathSpan);
+          row.appendChild(noteSpan);
+          root.appendChild(row);
+          if (r.ok) okCount++; else failCount++;
+        });
+
+        $('uninstall-sel-info').textContent = okCount + ' thanh cong, ' + failCount + ' loi';
+        $('uninstall-header').querySelector('p').textContent = 'Da xoa xong.';
+        UI.selUninstallApp = null;
+        UI.uninstallFiles = [];
+        UI.checkedPaths = new Set();
+        load();
+      } catch(e) {
+        $('uninstall-files').innerHTML = '<div class="uninstall-empty" style="color:var(--error)">Loi: ' + e.message + '</div>';
+        $('uninstall-delete-btn').disabled = false;
+        $('uninstall-select-all-btn').disabled = false;
+      }
+    }
+
+
+
+    // ===== CLEANER TAB (Dọn ổ Mac) =====
+    const CLN = {
+      items: [],
+      checked: new Set(),
+      status: 'idle',
+      job: null,
+    };
+
+    async function triggerCleanerScan() {
+      try {
+        $('cleaner-scan-btn').disabled = true;
+        await api('/api/cleaner/scan', {method: 'POST'});
+        pollCleanerStatus();
+      } catch (e) {
+        alert('Lỗi kích hoạt quét: ' + e.message);
+        $('cleaner-scan-btn').disabled = false;
+      }
+    }
+
+    async function pollCleanerStatus() {
+      try {
+        const status = await api('/api/cleaner/status');
+        CLN.status = status.status;
+        $('cleaner-scan-btn').disabled = (status.status === 'scanning');
+
+        if (status.status === 'scanning') {
+          $('cleaner-scanning-card').style.display = 'flex';
+          $('cleaner-scanning-current').textContent = status.current_item || '';
+          $('cleaner-scanning-progress-bar').style.width = (status.progress * 100) + '%';
+        } else {
+          $('cleaner-scanning-card').style.display = 'none';
+        }
+
+        if (status.items) {
+          const prevChecked = CLN.checked;
+          CLN.items = status.items;
+          if (status.status === 'done' || !prevChecked.size) {
+            // Mặc định chọn sẵn các mục an toàn (risk === 'safe') sau khi quét xong
+            CLN.checked = new Set(
+              status.status === 'done'
+                ? CLN.items.filter(i => i.risk === 'safe').map(i => i.path)
+                : Array.from(prevChecked)
+            );
+          }
+          $('cleaner-summary').textContent = CLN.items.length
+            ? CLN.items.length + ' mục, tổng ' + status.total_size_human
+            : '';
+          renderCleanerItems();
+        }
+      } catch (e) {
+        console.error('Lỗi lấy trạng thái cleaner:', e);
+      }
+    }
+
+    function renderCleanerItems() {
+      const root = $('cleaner-files');
+      root.innerHTML = '';
+
+      if (!CLN.items.length) {
+        root.innerHTML = '<div class="uninstall-empty">' +
+          (CLN.status === 'scanning'
+            ? 'Đang quét...'
+            : 'Không tìm thấy mục nào lớn hơn 0 B. Ổ Mac của bạn khá sạch!') +
+          '</div>';
+        $('cleaner-select-all-btn').disabled = true;
+        $('cleaner-delete-btn').disabled = true;
+        $('cleaner-desc').textContent = 'Bấm "Quét cache & rác" để bắt đầu.';
+        updateCleanerFooter();
+        return;
+      }
+
+      $('cleaner-desc').textContent = CLN.items.length + ' mục có thể dọn trên ổ Mac.';
+      $('cleaner-select-all-btn').disabled = false;
+
+      const allRow = document.createElement('div');
+      allRow.className = 'check-all-row';
+      const allChk = document.createElement('input');
+      allChk.type = 'checkbox';
+      allChk.className = 'file-checkbox';
+      allChk.checked = CLN.checked.size === CLN.items.length;
+      allChk.onchange = () => {
+        CLN.checked = allChk.checked ? new Set(CLN.items.map(i => i.path)) : new Set();
+        renderCleanerItems();
+      };
+      allRow.appendChild(allChk);
+      const allLabel = document.createElement('span');
+      allLabel.textContent = 'Chọn / bỏ chọn tất cả (' + CLN.items.length + ' mục, kể cả mục cần lưu ý)';
+      allLabel.style.cursor = 'pointer';
+      allLabel.onclick = () => { allChk.checked = !allChk.checked; allChk.onchange(); };
+      allRow.appendChild(allLabel);
+      root.appendChild(allRow);
+
+      const maxSize = CLN.items[0].size || 1;
+      let lastCategory = null;
+
+      CLN.items.forEach(it => {
+        if (it.category !== lastCategory) {
+          lastCategory = it.category;
+          const header = document.createElement('div');
+          header.className = 'cleaner-category-header';
+          header.textContent = it.category;
+          root.appendChild(header);
+        }
+
+        const row = document.createElement('div');
+        const isChecked = CLN.checked.has(it.path);
+        row.className = 'uninstall-file-item' + (isChecked ? ' checked' : '');
+
+        const chk = document.createElement('input');
+        chk.type = 'checkbox';
+        chk.className = 'file-checkbox';
+        chk.checked = isChecked;
+        chk.onclick = (e) => e.stopPropagation();
+        chk.onchange = () => {
+          if (chk.checked) CLN.checked.add(it.path); else CLN.checked.delete(it.path);
+          row.classList.toggle('checked', chk.checked);
+          updateCleanerFooter();
+        };
+
+        const pct = Math.max(2, (it.size / maxSize) * 100);
+        const riskClass = it.risk === 'caution' ? ' risk-caution' : '';
+        const riskLabel = it.risk === 'caution' ? 'lưu ý' : 'an toàn';
+
+        const info = document.createElement('div');
+        info.className = 'file-item-info';
+        info.innerHTML =
+          '<div class="file-item-header">' +
+            '<span class="file-item-name">' + escapeHtml(it.label) + '</span>' +
+            '<span class="file-item-category' + riskClass + '">' + riskLabel + '</span>' +
+            '<span class="file-item-size">' + it.size_human + '</span>' +
+          '</div>' +
+          '<div class="file-item-path">' + escapeHtml(it.path) + '</div>' +
+          '<div class="cleaner-item-desc">' + escapeHtml(it.description) + '</div>' +
+          '<div class="file-progress-bar"><div class="file-progress-fill" style="width:' + pct + '%"></div></div>';
+
+        row.appendChild(chk);
+        row.appendChild(info);
+        row.onclick = () => { chk.checked = !chk.checked; chk.onchange(); };
+        root.appendChild(row);
+      });
+
+      updateCleanerFooter();
+    }
+
+    function updateCleanerFooter() {
+      const n = CLN.checked.size;
+      $('cleaner-delete-btn').disabled = n === 0 || CLN.status === 'scanning' || !!CLN.job;
+      $('cleaner-sel-info').innerHTML = n > 0
+        ? 'Đã chọn <span>' + n + ' mục</span> để xóa'
+        : 'Chưa chọn mục nào';
+      const total = CLN.items.filter(i => CLN.checked.has(i.path)).reduce((s, i) => s + i.size, 0);
+      $('cleaner-total-size').textContent = n > 0 ? 'Sẽ giải phóng khoảng: ' + humanSize(total) : '';
+    }
+
+    function toggleCleanerSelectAll() {
+      if (CLN.checked.size === CLN.items.length) {
+        CLN.checked = new Set();
+      } else {
+        CLN.checked = new Set(CLN.items.map(i => i.path));
+      }
+      renderCleanerItems();
+    }
+
+    function addCleanerLog(text) {
+      const log = $('cleaner-log');
+      log.style.display = 'block';
+      const line = document.createElement('div');
+      line.textContent = '[' + new Date().toLocaleTimeString() + '] ' + text;
+      log.appendChild(line);
+      log.scrollTop = log.scrollHeight;
+    }
+
+    async function doCleanerClean() {
+      if (!CLN.checked.size || CLN.job) return;
+      const paths = Array.from(CLN.checked);
+      const cautionItems = CLN.items.filter(i => paths.includes(i.path) && i.risk === 'caution');
+      let msg = 'Xóa vĩnh viễn ' + paths.length + ' mục đã chọn trên ổ Mac?\n\nHành động này KHÔNG THỂ HOÀN TÁC.';
+      if (cautionItems.length) {
+        msg += '\n\nLưu ý: có ' + cautionItems.length + ' mục KHÔNG tự tạo lại được (' +
+          cautionItems.map(i => i.label).join(', ') + '). Chắc chắn không cần nữa?';
+      }
+      if (!confirm(msg)) return;
+
+      $('cleaner-delete-btn').disabled = true;
+      $('cleaner-select-all-btn').disabled = true;
+      addCleanerLog('Bắt đầu xóa ' + paths.length + ' mục...');
+      try {
+        const res = await api('/api/cleaner/clean', {
+          method: 'POST',
+          headers: {'Content-Type': 'application/json'},
+          body: JSON.stringify({paths: paths}),
+        });
+        CLN.job = res.job_id;
+        pollCleanerJob();
+      } catch (e) {
+        addCleanerLog('Lỗi: ' + e.message);
+        $('cleaner-delete-btn').disabled = false;
+        $('cleaner-select-all-btn').disabled = false;
+      }
+    }
+
+    async function pollCleanerJob() {
+      try {
+        const job = await api('/api/job?id=' + CLN.job);
+        $('cleaner-log').innerHTML = '';
+        job.logs.forEach(addCleanerLog);
+        if (job.status === 'running') {
+          setTimeout(pollCleanerJob, 800);
+          return;
+        }
+        CLN.job = null;
+        $('cleaner-select-all-btn').disabled = false;
+        if (job.status === 'done') {
+          CLN.checked = new Set();
+          await triggerCleanerScan();
+        } else {
+          updateCleanerFooter();
+        }
+      } catch (e) {
+        CLN.job = null;
+        $('cleaner-select-all-btn').disabled = false;
+        addCleanerLog('Lỗi theo dõi tiến trình: ' + e.message);
+      }
+    }
+
+    async function deleteUnavailableSimulators() {
+      if (!confirm('Xóa các iOS Simulator không còn dùng được (xcrun simctl delete unavailable)?\n\nChỉ xóa simulator đã hỏng/orphan, không đụng tới simulator đang dùng.')) return;
+      $('cleaner-sims-btn').disabled = true;
+      addCleanerLog('Đang xóa simulator không dùng được...');
+      try {
+        const res = await api('/api/cleaner/delete-unavailable-simulators', {method: 'POST'});
+        let job;
+        do {
+          job = await api('/api/job?id=' + res.job_id);
+          job.logs.forEach(addCleanerLog);
+          if (job.status === 'running') await new Promise(r => setTimeout(r, 700));
+        } while (job.status === 'running');
+        $('cleaner-log').innerHTML = '';
+        job.logs.forEach(addCleanerLog);
+      } catch (e) {
+        addCleanerLog('Lỗi: ' + e.message);
+      } finally {
+        $('cleaner-sims-btn').disabled = false;
+      }
+    }
+
+    load().catch(e => addLog(e.message));
+  </script>
+</body>
+</html>
