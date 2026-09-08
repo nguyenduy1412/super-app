@@ -1,0 +1,33 @@
+{
+  "_comment": "Danh sách SDK quảng cáo cần phát hiện & vô hiệu hóa. packages = đường dẫn smali; neutralize = method bị thay bằng return sớm; components = tên class Activity/Service/Receiver bị xóa khỏi manifest; permissions = quyền bị xóa.",
+  "sdks": [
+    {"name": "AdMob", "packages": ["com/google/android/gms/ads", "com/google/android/gms/internal/ads", "com/google/android/gms/ads/identifier"], "neutralize": ["loadAd", "show", "showAd", "initialize", "start", "load"], "components": ["com.google.android.gms.ads.AdActivity", "com.google.android.gms.ads.AdView"], "permissions": []},
+    {"name": "Meta Audience Network", "packages": ["com/facebook/ads"], "neutralize": ["loadAd", "show", "load", "initialize"], "components": ["com.facebook.ads.AudienceNetworkActivity", "com.facebook.ads.InterstitialAdActivity"], "permissions": []},
+    {"name": "AppLovin", "packages": ["com/applovin"], "neutralize": ["loadAd", "show", "showAd", "initialize", "load"], "components": ["com.applovin.adview.AppLovinAdActivity", "com.applovin.adview.AppLovinInterstitialActivity"], "permissions": []},
+    {"name": "Unity Ads", "packages": ["com/unity3d/ads"], "neutralize": ["load", "show", "initialize"], "components": ["com.unity3d.ads.adunit.AdUnitActivity", "com.unity3d.ads.AdUnitActivity"], "permissions": []},
+    {"name": "Vungle", "packages": ["com/vungle"], "neutralize": ["loadAd", "playAd", "init", "initialize"], "components": ["com.vungle.warren.AdActivity"], "permissions": []},
+    {"name": "ironSource", "packages": ["com/ironsrc"], "neutralize": ["loadAd", "show", "showRewardedVideo", "init", "setConsent"], "components": ["com.ironsource.sdk.activities.IronSourceMainActivity"], "permissions": []},
+    {"name": "MoPub", "packages": ["com/mopub"], "neutralize": ["loadAd", "show", "showAd"], "components": ["com.mopub.mobileads.MoPubActivity", "com.mopub.mobileads.MraidActivity"], "permissions": []},
+    {"name": "AppNext", "packages": ["com/appnext"], "neutralize": ["loadAd", "showAd", "show"], "components": ["com.appnext.ads.interstitial.InterstitialActivity"], "permissions": []},
+    {"name": "InMobi", "packages": ["com/inmobi"], "neutralize": ["load", "show", "setListener"], "components": ["com.inmobi.ads.InMobiAdActivity"], "permissions": []},
+    {"name": "Amazon Ads", "packages": ["com/amazon/device/ads"], "neutralize": ["loadAd", "show"], "components": ["com.amazon.device.ads.AdActivity"], "permissions": []},
+    {"name": "StartApp", "packages": ["com/startapp"], "neutralize": ["loadAd", "showAd", "show"], "components": ["com.startapp.android.publish.adsCommon.activities.BaseFullScreenActivity"], "permissions": []},
+    {"name": "myTarget", "packages": ["com/mailru"], "neutralize": ["load", "loadAd", "show"], "components": ["com.mailru.games.ads.InterstitialAdActivity"], "permissions": []},
+    {"name": "Pangle", "packages": ["com/bytedance/sdk/openadsdk", "com/bykv"], "neutralize": ["loadAd", "show", "showAd"], "components": ["com.bytedance.sdk.openadsdk.core.reward.TTRewardVideoActivity"], "permissions": []},
+    {"name": "Mintegral", "packages": ["com/mbridge", "com/mintegral"], "neutralize": ["load", "show", "preLoad"], "components": ["com.mbridge.msdk.reward.player.MBRewardVideoActivity"], "permissions": []},
+    {"name": "AdColony", "packages": ["com/adcolony"], "neutralize": ["requestAd", "show", "load"], "components": ["com.adcolony.sdk.AdColonyAdViewActivity", "com.adcolony.sdk.AdColonyInterstitialActivity"], "permissions": []},
+    {"name": "Tapjoy", "packages": ["com/tapjoy"], "neutralize": ["getPlacement", "showContent", "requestContent"], "components": ["com.tapjoy.TJAdUnitActivity", "com.tapjoy.TapjoyFullScreenAdActivity"], "permissions": []},
+    {"name": "Fyber", "packages": ["com/fyber", "com/fyber/inneractive"], "neutralize": ["requestAd", "show"], "components": ["com.fyber.inneractive.sdk.activities.InneractiveFullscreenAdActivity"], "permissions": []},
+    {"name": "PubNative", "packages": ["net/pubnative"], "neutralize": ["load", "show"], "components": [], "permissions": []},
+    {"name": "Smaato", "packages": ["com/smaato"], "neutralize": ["loadAd", "show"], "components": ["com.smaato.sdk.interstitial.SmaatoInterstitialAdActivity"], "permissions": []},
+    {"name": "GDT (Tencent)", "packages": ["com/qq/e"], "neutralize": ["loadAD", "show", "loadAd"], "components": ["com.qq.e.ads.AdActivity"], "permissions": []},
+    {"name": "Ogury", "packages": ["com/ogury"], "neutralize": ["load", "show"], "components": ["com.ogury.core.OguryAdActivity"], "permissions": []},
+    {"name": "Yandex Ads", "packages": ["com/yandex/mobile/ads"], "neutralize": ["loadAd", "show", "load"], "components": ["com.yandex.mobile.ads.common.AdActivity"], "permissions": []},
+    {"name": "AdMost", "packages": ["com/admost"], "neutralize": ["loadAd", "show", "load"], "components": ["com.admost.sdk.base.AdMostAdActivity"], "permissions": []},
+    {"name": "Kwai", "packages": ["com/kwad", "com/kuaishou"], "neutralize": ["loadAd", "show"], "components": ["com.kwad.components.ad.reward.KwaiAdActivity"], "permissions": []},
+    {"name": "BidMachine", "packages": ["io/bidmachine"], "neutralize": ["load", "show"], "components": ["io.bidmachine.native_ad.view.NativeAdActivity"], "permissions": []},
+    {"name": "Chartboost", "packages": ["com/chartboost"], "neutralize": ["show", "cache"], "components": ["com.chartboost.sdk.CBImpressionActivity"], "permissions": []},
+    {"name": "Moloco", "packages": ["com/moloco"], "neutralize": ["load", "show"], "components": [], "permissions": []}
+  ],
+  "manifest_permissions": ["com.google.android.gms.permission.AD_ID", "com.google.android.gms.permission.AD_SERVICES_ATTRIBUTION", "com.google.android.gms.permission.AD_SERVICES_CUSTOM_AUDIENCE", "com.google.android.gms.permission.AD_SERVICES_TOPICS", "android.permission.ACCESS_ADSERVICES_AD_ID", "android.permission.ACCESS_ADSERVICES_ATTRIBUTION", "android.permission.ACCESS_ADSERVICES_CUSTOM_AUDIENCE", "android.permission.ACCESS_ADSERVICES_TOPICS"]
+}

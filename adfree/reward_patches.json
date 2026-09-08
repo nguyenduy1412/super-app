@@ -1,0 +1,14 @@
+{
+  "_comment": "Luật bấm-là-nhận-quà. Khớp theo tên method + listener trong tham số; ready=ép true; callback=gọi thẳng listener thành công.",
+  "rules": [
+    {"name": "AdMob isReady/isLoaded", "packages": ["com/google/android/gms/ads", "com/google/android/gms/internal/ads"], "method": "isReady", "ready": true},
+    {"name": "AdMob isLoaded", "packages": ["com/google/android/gms/ads", "com/google/android/gms/internal/ads"], "method": "isLoaded", "ready": true},
+    {"name": "AdMob RewardedAd.show", "packages": ["com/google/android/gms/ads/rewarded"], "method": "show", "listener": "Lcom/google/android/gms/ads/rewarded/OnUserEarnedRewardListener;", "callback": "onUserEarnedReward", "callback_params": "(Lcom/google/android/gms/ads/rewarded/RewardItem;)V", "reward_stub": "Ladfree/stub/RewardItem;"},
+    {"name": "AdMob RewardedInterstitialAd.show", "packages": ["com/google/android/gms/ads/rewardedinterstitial"], "method": "show", "listener": "Lcom/google/android/gms/ads/rewarded/OnUserEarnedRewardListener;", "callback": "onUserEarnedReward", "callback_params": "(Lcom/google/android/gms/ads/rewarded/RewardItem;)V", "reward_stub": "Ladfree/stub/RewardItem;"},
+    {"name": "Unity Ads isReady/isLoaded", "packages": ["com/unity3d/ads"], "method": "isReady", "ready": true},
+    {"name": "Unity Ads show", "packages": ["com/unity3d/ads"], "method": "show", "listener": "Lcom/unity3d/ads/IUnityAdsShowListener;", "callback": "onUnityAdsShowComplete", "callback_params": "(Lcom/unity3d/ads/UnityAds$UnityAdsShowResult;)V", "reward_stub": null},
+    {"name": "AppLovin isReady", "packages": ["com/applovin"], "method": "isReady", "ready": true},
+    {"name": "AppLovin isAdReadyToShow", "packages": ["com/applovin"], "method": "isAdReadyToShow", "ready": true},
+    {"name": "AppLovin showAd", "packages": ["com/applovin"], "method": "showAd", "listener": "Lcom/applovin/mediation/ads/MaxRewardedAd$MaxRewardedListener;", "callback": "onUserRewarded", "callback_params": "(Lcom/applovin/mediation/MaxAd;Lcom/applovin/mediation/Reward;)V", "reward_stub": "Ladfree/stub/MaxAd;"}
+  ]
+}

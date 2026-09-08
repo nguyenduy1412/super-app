@@ -1,12 +1,15 @@
-"""HTTP controller: serve static UI and expose JSON API."""
+"""HTTP controller: serve Super App (Mac App Mover & GitKraken Web) and expose JSON APIs."""
 
 from __future__ import annotations
 
 import json
+import mimetypes
+import os
 import socket
 import subprocess
 import sys
 import threading
+import time
 import uuid
 import webbrowser
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
@@ -87,19 +90,99 @@ except ImportError:
         start_background_scan,
     )
 
+try:
+    from git_services import (
+        scan_recent_repos,
+        get_repo_data,
+        get_commit_details,
+        get_file_diff,
+        execute_action,
+    )
+except ImportError:
+    from .git_services import (
+        scan_recent_repos,
+        get_repo_data,
+        get_commit_details,
+        get_file_diff,
+        execute_action,
+    )
+
 WEB_DIR = Path(__file__).resolve().parent / "web"
-INDEX_HTML = (WEB_DIR / "index.html").read_text(encoding="utf-8")
+
+# SSE watcher registry for GitKraken: {repo_path: [queue, ...]}
+_sse_lock = threading.Lock()
+_sse_clients: Dict[str, list] = {}
+
+
+def _run_git_status(repo_path: str) -> str:
+    """Run git status --porcelain quickly for SSE watcher."""
+    try:
+        result = subprocess.run(
+            ["git", "status", "--porcelain=v1", "-uall"],
+            cwd=repo_path,
+            capture_output=True, text=True, timeout=3
+        )
+        return result.stdout
+    except Exception:
+        return ""
+
+
+def _sse_watcher_thread(repo_path: str) -> None:
+    """Background thread: polls git status every 200ms, pushes SSE event when changed."""
+    last_status = None
+    while True:
+        with _sse_lock:
+            clients = _sse_clients.get(repo_path, [])
+        if not clients:
+            with _sse_lock:
+                _sse_clients.pop(repo_path, None)
+            break
+        current = _run_git_status(repo_path)
+        if current != last_status:
+            last_status = current
+            msg = "data: changed\n\n"
+            dead = []
+            with _sse_lock:
+                clients = list(_sse_clients.get(repo_path, []))
+            for q in clients:
+                try:
+                    q.append(msg)
+                except Exception:
+                    dead.append(q)
+            if dead:
+                with _sse_lock:
+                    existing = _sse_clients.get(repo_path, [])
+                    _sse_clients[repo_path] = [q for q in existing if q not in dead]
+        time.sleep(0.2)
+
 
 
 class Handler(BaseHTTPRequestHandler):
     def log_message(self, *_args: object) -> None:
         return
 
+    def handle(self) -> None:
+        try:
+            super().handle()
+        except (ConnectionResetError, BrokenPipeError, ConnectionAbortedError, TimeoutError):
+            pass
+
+    def do_OPTIONS(self) -> None:
+        """Handle CORS pre-flight requests."""
+        self.send_response(204)
+        self.send_header("Access-Control-Allow-Origin", "*")
+        self.send_header("Access-Control-Allow-Headers", "Content-Type")
+        self.send_header("Access-Control-Allow-Methods", "GET, POST, OPTIONS")
+        self.end_headers()
+
     def send_json(self, payload: Dict[str, object], status: int = 200) -> None:
         data = json.dumps(payload, ensure_ascii=False).encode("utf-8")
         self.send_response(status)
         self.send_header("Content-Type", "application/json; charset=utf-8")
         self.send_header("Content-Length", str(len(data)))
+        self.send_header("Access-Control-Allow-Origin", "*")
+        self.send_header("Access-Control-Allow-Headers", "Content-Type")
+        self.send_header("Access-Control-Allow-Methods", "GET, POST, OPTIONS")
         self.end_headers()
         self.wfile.write(data)
 
@@ -111,12 +194,50 @@ class Handler(BaseHTTPRequestHandler):
         parsed = urlparse(self.path)
         try:
             if parsed.path == "/":
-                data = INDEX_HTML.encode("utf-8")
+                index_path = WEB_DIR / "index.html"
+                data = index_path.read_text(encoding="utf-8").encode("utf-8")
                 self.send_response(200)
                 self.send_header("Content-Type", "text/html; charset=utf-8")
+                self.send_header("Cache-Control", "no-cache, no-store, must-revalidate")
+                self.send_header("Pragma", "no-cache")
+                self.send_header("Expires", "0")
                 self.send_header("Content-Length", str(len(data)))
                 self.end_headers()
                 self.wfile.write(data)
+            elif parsed.path == "/app-mover":
+                mover_path = WEB_DIR / "mover.html"
+                data = mover_path.read_text(encoding="utf-8").encode("utf-8")
+                self.send_response(200)
+                self.send_header("Content-Type", "text/html; charset=utf-8")
+                self.send_header("Cache-Control", "no-cache, no-store, must-revalidate")
+                self.send_header("Content-Length", str(len(data)))
+                self.end_headers()
+                self.wfile.write(data)
+            elif parsed.path == "/gitkraken":
+                gk_path = WEB_DIR / "gitkraken.html"
+                data = gk_path.read_text(encoding="utf-8").encode("utf-8")
+                self.send_response(200)
+                self.send_header("Content-Type", "text/html; charset=utf-8")
+                self.send_header("Cache-Control", "no-cache, no-store, must-revalidate")
+                self.send_header("Content-Length", str(len(data)))
+                self.end_headers()
+                self.wfile.write(data)
+            elif parsed.path == "/adfree":
+                # AdFree chạy server riêng (mặc định cổng 8742) — chuyển hướng
+                # iframe sang đó. Đổi địa chỉ qua biến môi trường ADFREE_URL.
+                adfree_url = os.environ.get("ADFREE_URL", "http://localhost:8742/")
+                self.send_response(302)
+                self.send_header("Location", adfree_url)
+                self.send_header("Cache-Control", "no-cache, no-store, must-revalidate")
+                self.end_headers()
+            elif parsed.path == "/netfence":
+                # NetFence chạy server riêng (mặc định cổng 8748) — chuyển hướng
+                # iframe sang đó. Đổi địa chỉ qua biến môi trường NETFENCE_URL.
+                netfence_url = os.environ.get("NETFENCE_URL", "http://localhost:8748/")
+                self.send_response(302)
+                self.send_header("Location", netfence_url)
+                self.send_header("Cache-Control", "no-cache, no-store, must-revalidate")
+                self.end_headers()
             elif parsed.path == "/api/apps":
                 qs = parse_qs(parsed.query)
                 volume = Path(qs.get("volume", [str(DEFAULT_VOLUME)])[0])
@@ -181,6 +302,116 @@ class Handler(BaseHTTPRequestHandler):
                 self.send_json(scan_stuck_updates(volume))
             elif parsed.path == "/api/cleaner/status":
                 self.send_json(get_cleaner_status())
+            # === GitKraken APIs ===
+            elif parsed.path == "/api/repos":
+                repos = scan_recent_repos()
+                self.send_json({"ok": True, "repos": repos})
+            elif parsed.path == "/api/git":
+                qs = parse_qs(parsed.query)
+                repo_path = (qs.get("path", [""])[0] or os.getcwd()).strip()
+                target_sha = qs.get("sha", [None])[0]
+                if target_sha and target_sha.lower() != "wip":
+                    target_file = qs.get("file", [None])[0]
+                    all_files = qs.get("allFiles", ["false"])[0] == "true"
+                    data = get_commit_details(repo_path, target_sha, target_file, all_files)
+                    self.send_json(data)
+                    return
+                limit = int(qs.get("limit", ["1000"])[0])
+                status_only = qs.get("statusOnly", ["0"])[0] == "1"
+                data = get_repo_data(repo_path, limit, status_only=status_only)
+                self.send_json(data)
+            elif parsed.path == "/api/git/commit":
+                qs = parse_qs(parsed.query)
+                repo_path = (qs.get("path", [""])[0] or os.getcwd()).strip()
+                sha = qs.get("sha", [""])[0]
+                target_file = qs.get("file", [None])[0]
+                all_files = qs.get("allFiles", ["false"])[0] == "true"
+                if not sha:
+                    self.send_json({"error": "Missing sha parameter"}, status=400)
+                    return
+                data = get_commit_details(repo_path, sha, target_file, all_files)
+                self.send_json(data)
+            elif parsed.path == "/api/git/diff":
+                qs = parse_qs(parsed.query)
+                repo_path = (qs.get("path", [""])[0] or os.getcwd()).strip()
+                file_path = qs.get("file", [""])[0]
+                sha = qs.get("sha", [None])[0]
+                staged = qs.get("staged", ["false"])[0] == "true"
+                if not file_path:
+                    self.send_json({"error": "Missing file parameter"}, status=400)
+                    return
+                diff_text = get_file_diff(repo_path, file_path, sha, staged)
+                self.send_json({"ok": True, "diff": diff_text})
+            elif parsed.path == "/api/git/watch":
+                qs = parse_qs(parsed.query)
+                repo_path = (qs.get("path", [""])[0] or os.getcwd()).strip()
+                try:
+                    git_root = subprocess.run(
+                        ["git", "rev-parse", "--show-toplevel"],
+                        cwd=repo_path, capture_output=True, text=True, timeout=3
+                    ).stdout.strip() or repo_path
+                except Exception:
+                    git_root = repo_path
+
+                self.send_response(200)
+                self.send_header("Content-Type", "text/event-stream")
+                self.send_header("Cache-Control", "no-cache")
+                self.send_header("Connection", "keep-alive")
+                self.send_header("Access-Control-Allow-Origin", "*")
+                self.end_headers()
+
+                my_queue: list = []
+                with _sse_lock:
+                    if git_root not in _sse_clients:
+                        _sse_clients[git_root] = []
+                        t = threading.Thread(
+                            target=_sse_watcher_thread,
+                            args=(git_root,), daemon=True
+                        )
+                        t.start()
+                    _sse_clients[git_root].append(my_queue)
+
+                try:
+                    self.wfile.write(b"data: connected\n\n")
+                    self.wfile.flush()
+                except Exception:
+                    pass
+
+                try:
+                    while True:
+                        if my_queue:
+                            msg = my_queue.pop(0)
+                            self.wfile.write(msg.encode("utf-8"))
+                            self.wfile.flush()
+                        else:
+                            time.sleep(0.1)
+                except (BrokenPipeError, ConnectionResetError, OSError):
+                    pass
+                finally:
+                    with _sse_lock:
+                        clients = _sse_clients.get(git_root, [])
+                        if my_queue in clients:
+                            clients.remove(my_queue)
+                return
+            # === Static Assets (GitKraken & shared) ===
+            elif (
+                parsed.path.startswith(("/assets/", "/fonts/", "/images/", "/svg-icons/", "/templates/"))
+                or parsed.path in ("/favicon.ico", "/robots.txt")
+            ):
+                rel_path = parsed.path.lstrip("/")
+                file_path = (WEB_DIR / rel_path).resolve()
+                if str(file_path).startswith(str(WEB_DIR)) and file_path.is_file():
+                    mime, _ = mimetypes.guess_type(str(file_path))
+                    mime = mime or "application/octet-stream"
+                    content = file_path.read_bytes()
+                    self.send_response(200)
+                    self.send_header("Content-Type", f"{mime}; charset=utf-8" if "text" in mime or "json" in mime or "javascript" in mime else mime)
+                    self.send_header("Content-Length", str(len(content)))
+                    self.send_header("Cache-Control", "public, max-age=86400")
+                    self.end_headers()
+                    self.wfile.write(content)
+                    return
+                self.send_json({"error": "File not found"}, 404)
             else:
                 self.send_json({"error": "Not found"}, 404)
         except Exception as exc:
@@ -339,6 +570,15 @@ class Handler(BaseHTTPRequestHandler):
 
                 threading.Thread(target=run_delete_sims, daemon=True).start()
                 self.send_json({"job_id": job_id})
+            elif parsed.path == "/api/git/action":
+                action = str(body.get("action") or "")
+                repo_path = str(body.get("repoPath") or os.getcwd())
+                if not action:
+                    self.send_json({"error": "Missing action parameter"}, status=400)
+                    return
+                params = body.get("params", body)
+                result = execute_action(repo_path, action, params)
+                self.send_json(result)
             else:
                 self.send_json({"error": "Not found"}, 404)
         except Exception as exc:
@@ -346,13 +586,26 @@ class Handler(BaseHTTPRequestHandler):
 
 
 def free_port() -> int:
+    """Kiểm tra cổng mặc định. Không tự fallback cổng random để tránh trùng instance."""
     with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as sock:
+        sock.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
         try:
             sock.bind((HOST, PORT))
             return PORT
         except OSError:
-            sock.bind((HOST, 0))
-            return int(sock.getsockname()[1])
+            return 0
+
+
+class SuperAppServer(ThreadingHTTPServer):
+    allow_reuse_address = True
+    daemon_threads = True
+
+    def handle_error(self, request, client_address) -> None:
+        """Bỏ qua các lỗi ngắt kết nối thông thường của client trình duyệt."""
+        exc_type, exc_value, _ = sys.exc_info()
+        if exc_type in (ConnectionResetError, BrokenPipeError, ConnectionAbortedError, TimeoutError):
+            return
+        super().handle_error(request, client_address)
 
 
 def main() -> int:
@@ -363,10 +616,20 @@ def main() -> int:
         print(f"Khong tim thay giao dien: {WEB_DIR / 'index.html'}", file=sys.stderr)
         return 1
     port = free_port()
-    server = ThreadingHTTPServer((HOST, port), Handler)
+    if port == 0:
+        # Đã có Super App server chạy trước đó: không nhân bản thêm instance,
+        # chỉ mở lại đúng URL đang sống để lần bấm sau cũng dùng được.
+        url = f"http://{HOST}:{PORT}/"
+        print(f"✓ Super App server da chay san tai: {url}")
+        webbrowser.open(url)
+        return 0
+    server = SuperAppServer((HOST, port), Handler)
     url = f"http://{HOST}:{port}/"
-    print(f"Mac App Mover web UI: {url}")
-    print("Nhan Ctrl+C de tat.")
+    print("=" * 60)
+    print(f"⚡ SUPER APP SUITE (Mac App Mover & GitKraken Web)")
+    print(f"🌐 Web UI: {url}")
+    print(f"📦 Drawer chuyển đổi ứng dụng đặt ở góc trên màn hình.")
+    print("=" * 60)
     start_background_scan()
     threading.Timer(0.4, lambda: webbrowser.open(url)).start()
     try:

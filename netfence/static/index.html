@@ -1,0 +1,723 @@
+<!DOCTYPE html>
+<html lang="vi">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>NetFence — LAN Inventory & Realtime Access Control</title>
+<style>
+  :root{
+    --bg:#0b1120; --panel:#111a2e; --panel2:#0f1626; --line:#1e2b45;
+    --text:#e5edff; --muted:#8aa0c6; --accent:#f59e0b; --accent2:#fb7185;
+    --ok:#34d399; --danger:#f87171; --warn:#fbbf24;
+  }
+  *{box-sizing:border-box}
+  body{margin:0;background:radial-gradient(1200px 600px at 80% -10%,rgba(245,158,11,.10),transparent),var(--bg);
+    color:var(--text);font:14px/1.5 -apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif;}
+  .wrap{max-width:1120px;margin:0 auto;padding:22px 20px 60px;}
+  h1{font-size:20px;margin:0;display:flex;align-items:center;gap:10px}
+  .badge{font-size:11px;font-weight:700;padding:3px 9px;border-radius:999px;background:rgba(245,158,11,.15);color:var(--accent);border:1px solid rgba(245,158,11,.3)}
+  .sub{color:var(--muted);font-size:12.5px;margin-top:4px}
+  .banner{margin:16px 0 12px;padding:11px 14px;border-radius:12px;background:rgba(251,113,133,.08);
+    border:1px solid rgba(251,113,133,.25);color:#ffc9d2;font-size:12.5px;display:flex;gap:10px;align-items:flex-start}
+  .grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(150px,1fr));gap:10px;margin:14px 0}
+  .stat{background:var(--panel);border:1px solid var(--line);border-radius:12px;padding:11px 13px}
+  .stat .k{color:var(--muted);font-size:11px;text-transform:uppercase;letter-spacing:.04em}
+  .stat .v{font-size:14px;font-weight:600;margin-top:3px;word-break:break-all}
+  .bar{display:flex;gap:8px;align-items:center;flex-wrap:wrap;margin:12px 0}
+  button{font:inherit;cursor:pointer;border-radius:10px;border:1px solid var(--line);
+    background:var(--panel);color:var(--text);padding:8px 14px;font-weight:600;transition:.15s}
+  button:hover{border-color:var(--accent);transform:translateY(-1px)}
+  button:disabled{opacity:.5;cursor:not-allowed;transform:none}
+  button.primary{background:linear-gradient(135deg,#f59e0b,#f97316);border:none;color:#1a1200}
+  button.danger{background:transparent;border-color:rgba(248,113,113,.4);color:var(--danger)}
+  button.warn{background:transparent;border-color:rgba(251,191,36,.4);color:var(--warn)}
+  button.mini{padding:5px 10px;font-size:12px;border-radius:8px}
+  .pill{font-size:12px;padding:5px 11px;border-radius:999px;border:1px solid var(--line);display:inline-flex;gap:7px;align-items:center}
+  .dot{width:8px;height:8px;border-radius:50%;background:var(--muted)}
+  .dot.on{background:var(--ok);box-shadow:0 0 8px var(--ok)}
+  .dot.off{background:var(--muted)}
+  table{width:100%;border-collapse:collapse;margin-top:8px;background:var(--panel2);border-radius:12px;overflow:hidden}
+  th,td{text-align:left;padding:10px 12px;border-bottom:1px solid var(--line);font-size:13px}
+  th{color:var(--muted);font-size:11px;text-transform:uppercase;letter-spacing:.04em;background:var(--panel)}
+  tr:last-child td{border-bottom:none}
+  td.mac{font-family:ui-monospace,Menlo,monospace;color:#cbd5e1;font-size:12px}
+  .tag{font-size:10.5px;padding:2px 7px;border-radius:6px;font-weight:700}
+  .tag.gw{background:rgba(52,211,153,.15);color:var(--ok)}
+  .tag.self{background:rgba(96,165,250,.15);color:#60a5fa}
+  .tag.dev{background:rgba(148,163,184,.12);color:var(--muted)}
+  .tag.blk{background:rgba(248,113,113,.18);color:var(--danger)}
+  .tag.blk-offline{background:rgba(251,146,60,.18);color:#fb923c;border:1px solid rgba(251,146,60,.4)}
+  .row-blocked{background:rgba(248,113,113,.06)}
+  .row-offline{background:rgba(251,146,60,.06)}
+  .empty{padding:40px;text-align:center;color:var(--muted)}
+  .spin{display:inline-block;width:14px;height:14px;border:2px solid rgba(255,255,255,.25);
+    border-top-color:var(--accent);border-radius:50%;animation:sp .7s linear infinite;vertical-align:-2px}
+  @keyframes sp{to{transform:rotate(360deg)}}
+  .toast{position:fixed;left:50%;bottom:24px;transform:translateX(-50%) translateY(20px);opacity:0;
+    background:#0f1830;border:1px solid var(--line);padding:11px 18px;border-radius:12px;font-size:13px;
+    box-shadow:0 12px 40px rgba(0,0,0,.5);transition:.25s;pointer-events:none;z-index:99}
+  .toast.show{opacity:1;transform:translateX(-50%) translateY(0)}
+  .toast.err{border-color:rgba(248,113,113,.5);color:#ffc9c9}
+  .toast.ok{border-color:rgba(52,211,153,.5);color:#d1fae5}
+  .toast.warn{border-color:rgba(251,191,36,.5);color:#fef3c7}
+  select{font:inherit;background:var(--panel);color:var(--text);border:1px solid var(--line);border-radius:8px;padding:5px 8px}
+  .dev-name .dev-ic{font-size:16px}
+  .dtype{font-weight:600}
+  .os{font-size:11px;color:var(--muted);margin-left:5px}
+  .conf{font-size:10px;color:#7c8db5;margin-left:4px;font-style:italic}
+
+  .category-tabs{display:flex;gap:8px;align-items:center;flex-wrap:wrap;margin:10px 0 12px;}
+  .cat-tab{font:inherit;font-size:12.5px;padding:6px 14px;border-radius:20px;border:1px solid var(--line);
+    background:var(--panel);color:var(--muted);font-weight:600;display:inline-flex;align-items:center;gap:6px;transition:.15s;cursor:pointer;}
+  .cat-tab:hover{border-color:var(--accent);color:var(--text);transform:translateY(-1px);}
+  .cat-tab.active{background:rgba(245,158,11,.15);border-color:var(--accent);color:var(--accent);}
+  .badge-count{font-size:11px;padding:1px 6px;border-radius:10px;background:rgba(255,255,255,.08);color:var(--text);}
+  .cat-tab.active .badge-count{background:var(--accent);color:#1a1200;font-weight:700;}
+  .badge-count.danger{background:rgba(248,113,113,.2);color:var(--danger);}
+  .cat-tab.active .badge-count.danger{background:var(--danger);color:#fff;}
+  .grp-tag{font-size:10px;padding:2px 6px;border-radius:6px;margin-left:6px;font-weight:600;text-transform:uppercase;letter-spacing:0.3px;}
+  .grp-phone{background:rgba(52,211,153,.15);color:#34d399;border:1px solid rgba(52,211,153,.3);}
+  .grp-computer{background:rgba(59,130,246,.15);color:#60a5fa;border:1px solid rgba(59,130,246,.3);}
+  .grp-unknown{background:rgba(148,163,184,.15);color:#94a3b8;border:1px solid rgba(148,163,184,.3);}
+
+  /* Realtime Alert Banner */
+  
+  /* Threat Alert (Siren Banner) */
+  .threat-alert{margin:12px 0;padding:14px 18px;border-radius:12px;background:rgba(239,68,68,.18);
+    border:2px solid #ef4444;display:flex;align-items:center;gap:14px;animation:pulseSiren 1.2s infinite alternate;}
+  @keyframes pulseSiren{0%{box-shadow:0 0 10px rgba(239,68,68,.2)}100%{box-shadow:0 0 25px rgba(239,68,68,.6)}}
+  .threat-icon{font-size:24px;animation:spinShake 0.6s infinite alternate ease-in-out;}
+  @keyframes spinShake{0%{transform:rotate(-10deg) scale(1)}100%{transform:rotate(10deg) scale(1.2)}}
+  .live-alert{margin:10px 0;padding:11px 16px;border-radius:12px;display:flex;align-items:center;gap:12px;
+    font-size:13px;animation:pulseAlert 2.5s infinite ease-in-out;}
+  .live-alert.danger{background:rgba(248,113,113,.15);border:1px solid rgba(248,113,113,.4);color:#fecaca}
+  .live-alert.warn{background:rgba(251,191,36,.15);border:1px solid rgba(251,191,36,.4);color:#fef3c7}
+  .live-alert.info{background:rgba(59,130,246,.15);border:1px solid rgba(59,130,246,.4);color:#bfdbfe}
+  @keyframes pulseAlert{0%,100%{box-shadow:0 0 0 rgba(245,158,11,0)}50%{box-shadow:0 0 16px rgba(245,158,11,.25)}}
+
+  /* Events Drawer */
+  .events-drawer{background:var(--panel2);border:1px solid var(--line);border-radius:12px;margin:10px 0;padding:8px 12px;font-size:12px;}
+  .events-drawer summary{cursor:pointer;font-weight:600;color:var(--muted);user-select:none;display:flex;align-items:center;justify-content:space-between}
+  .events-drawer summary:hover{color:var(--text)}
+  .events-list{max-height:140px;overflow-y:auto;margin-top:8px;display:flex;flex-direction:column;gap:5px;padding-right:4px}
+  .event-item{display:flex;gap:8px;align-items:center;padding:5px 8px;border-radius:6px;background:rgba(255,255,255,.03);font-size:12px}
+  .event-time{color:var(--muted);font-family:ui-monospace,Menlo,monospace;font-size:11px;min-width:55px}
+</style>
+</head>
+<body>
+<div class="wrap">
+  <h1>📡 NetFence <span class="badge">LAN Realtime Control</span></h1>
+  <div class="sub">Kiểm kê thiết bị nội bộ, chặn/bỏ chặn & tự động phát hiện thiết bị đổi mạng / ngắt kết nối theo thời gian thực.</div>
+
+  <div class="banner">
+    <span>⚠️</span>
+    <div><b>Chỉ dùng cho mạng của chính bạn / môi trường được ủy quyền.</b>
+    Khi chặn, NetFence tự động phát tín hiệu ARP & ICMPv6 liên tục mỗi 1s. Hệ thống có luồng giám sát nền: nếu thiết bị đích <b>đổi mạng, ngắt Wi-Fi</b> hoặc <b>nhận IP mới</b>, NetFence sẽ cảnh báo ngay lập tức và tự động cập nhật số lượng chặn.</div>
+  </div>
+
+  <!-- Threat Siren Banner (ARP Spoofing Detected) -->
+  <div id="threat-alert" class="threat-alert" style="display:none">
+    <span class="threat-icon">🚨</span>
+    <div style="flex:1">
+      <div style="font-weight:800;font-size:14.5px;color:#fca5a5" id="threat-title">CẢNH BÁO TẤN CÔNG: PHÁT HIỆN THIẾT BỊ GIẢ MẠO ROUTER!</div>
+      <div style="font-size:13px;color:#fee2e2;margin-top:2px" id="threat-desc"></div>
+    </div>
+    <button class="mini danger" id="btn-isolate" onclick="isolateAttacker()" style="font-weight:700;padding:7px 14px;background:#ef4444;color:#fff;border:none">⛔ Cách ly kẻ tấn công</button>
+    <button class="mini" onclick="dismissThreatAlert()">✕ Bỏ qua</button>
+  </div>
+
+  <!-- Live Alert Banner (Realtime events) -->
+  <div id="live-alert" class="live-alert warn" style="display:none">
+    <span id="live-alert-icon" style="font-size:16px">⚠️</span>
+    <span id="live-alert-msg" style="flex:1;font-weight:600"></span>
+    <span id="live-alert-time" style="font-size:11px;opacity:0.8;font-family:ui-monospace,Menlo,monospace"></span>
+    <button class="mini" onclick="dismissLiveAlert()">✕ Đóng</button>
+  </div>
+
+  <div class="grid" id="info"></div>
+
+  <div class="bar">
+    <button class="primary" id="btn-scan" onclick="doScan()">🔍 Quét mạng</button>
+    <button class="danger" id="btn-stop" onclick="doStop()">⛔ Bỏ chặn tất cả & tắt engine</button>
+    <button id="btn-sniff" onclick="doSniff()">📛 Bắt tên (DHCP)</button>
+    <button class="warn mini" id="btn-cleanup" onclick="doCleanupOffline()" style="display:none">🧹 Dọn dẹp thiết bị ngoại tuyến</button>
+        <span class="pill" id="defense-pill" title="Hệ thống tự động khóa tĩnh ARP Gateway để miễn nhiễm mọi đòn tấn công"><span class="dot on" style="background:#38bdf8;box-shadow:0 0 8px #38bdf8"></span><span id="defense-text">Tự vệ: Đang bật (Khóa tĩnh Gateway)</span></span>
+    <span class="pill"><span class="dot" id="eng-dot"></span><span id="eng-text">Engine: —</span></span>
+    <span class="pill" id="sniff-pill"><span class="dot" id="sniff-dot"></span><span id="sniff-text">Bắt tên: tắt</span></span>
+    <span class="pill" id="blk-pill" style="display:none"></span>
+    <span style="flex:1"></span>
+    <button class="mini" id="btn-sound" onclick="toggleSound()" title="Bật/tắt âm thanh cảnh báo">🔊 Âm thanh</button>
+    <button class="mini" id="btn-notif" onclick="reqNotificationPerm()" title="Bật thông báo desktop macOS">🔔 Thông báo</button>
+    <input type="text" id="search-input" placeholder="🔎 Tìm tên, IP, MAC (vd: poco)..." oninput="filterDevices()" style="font:inherit;font-size:13px;background:var(--panel);color:var(--text);border:1px solid var(--line);border-radius:8px;padding:5px 10px;width:200px">
+    <label class="pill">Nhịp ARP
+      <select id="interval">
+        <option value="500">500 ms (0.5 giây)</option>
+        <option value="1000" selected>1000 ms (1 giây - Mặc định)</option>
+        <option value="2000">2000 ms (2 giây)</option>
+      </select>
+    </label>
+  </div>
+
+  <!-- Collapsible Event Log Drawer -->
+  <details class="events-drawer" id="events-drawer">
+    <summary>
+      <span>📋 Nhật ký giám sát thời gian thực (<span id="event-count">0</span> sự kiện)</span>
+      <span style="font-size:11px;color:var(--accent)">Bấm để xem lịch sử đổi mạng / kết nối</span>
+    </summary>
+    <div class="events-list" id="events-list">
+      <div style="color:var(--muted);text-align:center;padding:8px">Chưa có sự kiện nào.</div>
+    </div>
+  </details>
+
+  <div class="category-tabs">
+    <button class="cat-tab active" data-cat="all" onclick="selectCategory('all')">
+      Tất cả <span class="badge-count" id="cnt-all">0</span>
+    </button>
+    <button class="cat-tab" data-cat="phone" onclick="selectCategory('phone')">
+      📱 Điện thoại <span class="badge-count" id="cnt-phone">0</span>
+    </button>
+    <button class="cat-tab" data-cat="computer" onclick="selectCategory('computer')">
+      💻 Máy tính <span class="badge-count" id="cnt-comp">0</span>
+    </button>
+    <button class="cat-tab" data-cat="unknown" onclick="selectCategory('unknown')">
+      ❓ Không xác định <span class="badge-count" id="cnt-unknown">0</span>
+    </button>
+    <button class="cat-tab" data-cat="blocked" onclick="selectCategory('blocked')" style="color:var(--danger)">
+      ⛔ Đang chặn <span class="badge-count danger" id="cnt-blocked">0</span>
+    </button>
+  </div>
+
+  <table id="tbl">
+    <thead><tr><th>Thiết bị</th><th>Loại / OS</th><th>IP</th><th>MAC</th><th>Nhà sản xuất</th><th>Vai trò</th><th style="text-align:right">Hành động</th></tr></thead>
+    <tbody id="rows"><tr><td colspan="7" class="empty">Bấm <b>Quét mạng</b> để bắt đầu.</td></tr></tbody>
+  </table>
+</div>
+
+<div class="toast" id="toast"></div>
+
+<script>
+let scanning = false, lastDevices = [], lastBlocked = [], lastSummary = null;
+let currentCategory = 'all';
+let lastSeenEventId = 0;
+let soundEnabled = localStorage.getItem('netfence_sound') !== '0';
+
+let currentThreat = null;
+let lastThreatCount = 0;
+
+function handleThreats(threats) {
+  if (!threats || !threats.length) {
+    dismissThreatAlert();
+    return;
+  }
+  const t = threats[threats.length - 1];
+  currentThreat = t;
+  const name = t.attacker_name || t.attacker_ip || t.attacker_mac;
+  const banner = document.getElementById('threat-alert');
+  const desc = document.getElementById('threat-desc');
+  if (desc) {
+    desc.innerHTML = `Thiết bị <b>${esc(name)}</b> (IP: <b>${esc(t.attacker_ip || 'Chưa rõ')}</b>, MAC: <code>${esc(t.attacker_mac)}</code>) đang liên tục gửi gói tin giả mạo Gateway <b>${esc(t.spoofed_ip)}</b>! (Đã bắt <b>${t.count}</b> gói độc hại)`;
+  }
+  if (banner) banner.style.display = 'flex';
+
+  if (t.count > lastThreatCount) {
+    lastThreatCount = t.count;
+    playChime('threat');
+    sendDesktopNotif('🚨 NetFence: PHÁT HIỆN TẤN CÔNG ARP!', `Thiết bị ${name} (${t.attacker_mac}) đang giả mạo Router!`);
+  }
+}
+
+function dismissThreatAlert() {
+  const banner = document.getElementById('threat-alert');
+  if (banner) banner.style.display = 'none';
+}
+
+async function isolateAttacker() {
+  if (!currentThreat) return;
+  const ip = currentThreat.attacker_ip;
+  const mac = currentThreat.attacker_mac;
+  const name = currentThreat.attacker_name || ('Kẻ tấn công ' + mac);
+  if (!ip) {
+    toast('Chưa xác định được IP của thiết bị để chặn. Hãy bấm "Quét mạng" để cập nhật IP.', 'err');
+    return;
+  }
+  toast(`Đang cách ly kẻ tấn công: ${name} (${ip}) ...`);
+  await block(ip, mac, name);
+  dismissThreatAlert();
+}
+
+function renderDefense(defense) {
+  const pill = document.getElementById('defense-pill');
+  const txt = document.getElementById('defense-text');
+  if (!pill || !txt) return;
+  const on = defense && defense.active;
+  txt.textContent = on
+    ? `Tự vệ: Đang bật (Khóa tĩnh Gateway)`
+    : `Tự vệ: Sẵn sàng`;
+  const dot = pill.querySelector('.dot');
+  if (dot) dot.className = 'dot ' + (on ? 'on' : 'off');
+}
+
+function updateSoundBtn() {
+  const b = document.getElementById('btn-sound');
+  if (b) b.textContent = soundEnabled ? '🔊 Âm thanh' : '🔇 Đã tắt âm';
+}
+updateSoundBtn();
+
+function toggleSound() {
+  soundEnabled = !soundEnabled;
+  localStorage.setItem('netfence_sound', soundEnabled ? '1' : '0');
+  updateSoundBtn();
+  if (soundEnabled) playChime('online');
+}
+
+function playChime(type) {
+  if (!soundEnabled) return;
+  try {
+    const ctx = new (window.AudioContext || window.webkitAudioContext)();
+    const osc = ctx.createOscillator();
+    const gain = ctx.createGain();
+    osc.connect(gain);
+    gain.connect(ctx.destination);
+    const now = ctx.currentTime;
+    if (type === 'threat') {
+      osc.type = 'sawtooth';
+      const f1 = 700, f2 = 960;
+      osc.frequency.setValueAtTime(f1, now);
+      osc.frequency.setValueAtTime(f2, now + 0.15);
+      osc.frequency.setValueAtTime(f1, now + 0.3);
+      osc.frequency.setValueAtTime(f2, now + 0.45);
+      gain.gain.setValueAtTime(0.2, now);
+      gain.gain.exponentialRampToValueAtTime(0.01, now + 0.6);
+      osc.start(now);
+      osc.stop(now + 0.65);
+    } else if (type === 'offline') {
+      osc.type = 'sawtooth';
+      osc.frequency.setValueAtTime(440, now);
+      osc.frequency.setValueAtTime(310, now + 0.12);
+      gain.gain.setValueAtTime(0.12, now);
+      gain.gain.exponentialRampToValueAtTime(0.01, now + 0.3);
+      osc.start(now);
+      osc.stop(now + 0.3);
+    } else if (type === 'migrated') {
+      osc.type = 'triangle';
+      osc.frequency.setValueAtTime(380, now);
+      osc.frequency.linearRampToValueAtTime(760, now + 0.2);
+      gain.gain.setValueAtTime(0.14, now);
+      gain.gain.exponentialRampToValueAtTime(0.01, now + 0.35);
+      osc.start(now);
+      osc.stop(now + 0.35);
+    } else {
+      osc.type = 'sine';
+      osc.frequency.setValueAtTime(580, now);
+      osc.frequency.exponentialRampToValueAtTime(880, now + 0.15);
+      gain.gain.setValueAtTime(0.1, now);
+      gain.gain.exponentialRampToValueAtTime(0.01, now + 0.3);
+      osc.start(now);
+      osc.stop(now + 0.3);
+    }
+  } catch (e) {}
+}
+
+function updateNotifBtn() {
+  const b = document.getElementById('btn-notif');
+  if (!b) return;
+  if (!('Notification' in window)) {
+    b.style.display = 'none';
+    return;
+  }
+  if (Notification.permission === 'granted') {
+    b.textContent = '🔔 Đã bật thông báo';
+    b.style.borderColor = 'var(--ok)';
+  } else {
+    b.textContent = '🔔 Bật thông báo desktop';
+  }
+}
+updateNotifBtn();
+
+function reqNotificationPerm() {
+  if ('Notification' in window) {
+    Notification.requestPermission().then(p => {
+      updateNotifBtn();
+      if (p === 'granted') {
+        new Notification('NetFence', { body: 'Đã bật thông báo desktop thành công! Bạn sẽ nhận được cảnh báo ngay khi thiết bị đổi mạng.' });
+      }
+    });
+  }
+}
+
+function sendDesktopNotif(title, body) {
+  if ('Notification' in window && Notification.permission === 'granted') {
+    try {
+      new Notification(title, { body: body });
+    } catch (e) {}
+  }
+}
+
+function showLiveAlert(ev) {
+  const bar = document.getElementById('live-alert');
+  const ic = document.getElementById('live-alert-icon');
+  const msg = document.getElementById('live-alert-msg');
+  const tm = document.getElementById('live-alert-time');
+  if (!bar) return;
+
+  bar.className = 'live-alert ' + (ev.type === 'device_offline' ? 'danger' : (ev.type === 'ip_changed' ? 'warn' : 'info'));
+  ic.textContent = ev.type === 'device_offline' ? '⚠️' : (ev.type === 'ip_changed' ? '🔄' : 'ℹ️');
+  msg.textContent = ev.message;
+  tm.textContent = ev.time_str || '';
+  bar.style.display = 'flex';
+}
+
+function dismissLiveAlert() {
+  const bar = document.getElementById('live-alert');
+  if (bar) bar.style.display = 'none';
+}
+
+function handleEvents(events) {
+  if (!events || !events.length) return;
+  const listEl = document.getElementById('events-list');
+  const countEl = document.getElementById('event-count');
+  if (countEl) countEl.textContent = events.length;
+
+  if (listEl) {
+    listEl.innerHTML = events.slice().reverse().map(ev => {
+      let icon = 'ℹ️';
+      if (ev.type === 'device_offline') icon = '⚠️';
+      else if (ev.type === 'ip_changed') icon = '🔄';
+      else if (ev.type === 'device_online') icon = '🟢';
+      else if (ev.type === 'network_changed') icon = '🌐';
+      return `<div class="event-item"><span class="event-time">${esc(ev.time_str)}</span> <span>${icon}</span> <span>${esc(ev.message)}</span></div>`;
+    }).join('');
+  }
+
+  // Bắt các sự kiện mới xuất hiện
+  events.forEach(ev => {
+    if (ev.id > lastSeenEventId) {
+      lastSeenEventId = Math.max(lastSeenEventId, ev.id);
+      showLiveAlert(ev);
+      if (ev.type === 'device_offline') {
+        playChime('offline');
+        sendDesktopNotif('NetFence: Thiết bị đã đổi mạng', ev.message);
+        toast(ev.message, 'err');
+      } else if (ev.type === 'ip_changed') {
+        playChime('migrated');
+        sendDesktopNotif('NetFence: Thiết bị đã đổi IP mới', ev.message);
+        toast(ev.message, 'warn');
+      } else if (ev.type === 'device_online') {
+        playChime('online');
+        toast(ev.message, 'ok');
+      } else if (ev.type === 'network_changed') {
+        playChime('migrated');
+        toast(ev.message, 'warn');
+      }
+    }
+  });
+}
+
+function filterDevices() {
+  renderDevices(lastDevices, lastBlocked);
+}
+
+function getDeviceGroup(d) {
+  const icon = d.icon || '';
+  const t = (d.type || '').toLowerCase();
+  const os = (d.os || '').toLowerCase();
+  const name = (d.name || '').toLowerCase();
+
+  if (
+    icon === '📱' ||
+    ['iphone', 'xiaomi', 'samsung', 'android phone', 'android'].includes(t) ||
+    os === 'ios' || os.startsWith('ios ') || os === 'android' || os.startsWith('android ') ||
+    ['iphone', 'galaxy', 'poco', 'redmi', 'xiaomi', 'oppo', 'reno', 'vivo', 'zhen-wo', 'sm-'].some(k => name.includes(k)) ||
+    ['iphone', 'xiaomi', 'samsung', 'pixel', 'redmi', 'poco', 'oppo', 'vivo', 'huawei', 'honor', 'realme', 'oneplus'].some(k => t.includes(k))
+  ) {
+    return 'phone';
+  }
+
+  if (
+    ['💻', '🪟', '🍎'].includes(icon) ||
+    ['macbook', 'mac', 'imac', 'windows pc', 'máy này (mac)'].includes(t) ||
+    os === 'macos' || os.startsWith('macos ') || os === 'windows' || os.startsWith('windows ') ||
+    ['macbook', 's-mac', 'mac-', '-mac', 'desktop-', 'win-', 'pc-', 'minipc', 'laptop', 'kaizer-mac', 'ducanh2610', 'mot-con-ca'].some(k => name.includes(k)) ||
+    ['windows', 'macbook', 'imac', 'desktop', 'laptop'].some(k => t.includes(k))
+  ) {
+    return 'computer';
+  }
+
+  return 'unknown';
+}
+
+function selectCategory(cat) {
+  currentCategory = cat;
+  document.querySelectorAll('.cat-tab').forEach(b => b.classList.toggle('active', b.dataset.cat === cat));
+  renderDevices(lastDevices, lastBlocked);
+}
+
+function toast(msg, kind = 'ok') {
+  const t = document.getElementById('toast');
+  t.textContent = msg; t.className = 'toast show ' + kind;
+  clearTimeout(t._t); t._t = setTimeout(() => t.className = 'toast', 3000);
+}
+async function api(path, opts) {
+  const r = await fetch(path, opts); return r.json();
+}
+function esc(s) { return (s || '').replace(/[&<>"]/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c])); }
+
+function renderInfo(info, engine) {
+  const g = document.getElementById('info');
+  const rows = [
+    ['Interface', info.interface || '—'],
+    ['IP máy này', info.ip || '—'],
+    ['MAC máy này', info.mac || '—'],
+    ['Subnet', info.cidr || '—'],
+    ['Gateway IPv4', info.gateway_ip ? `${info.gateway_ip} (${esc(info.gateway_mac || '')})` : '—'],
+    ['Gateway IPv6', info.gateway_ip6 ? `${esc(info.gateway_ip6)}` : '— (IPv4 Only)'],
+  ];
+  g.innerHTML = rows.map(([k, v]) => `<div class="stat"><div class="k">${k}</div><div class="v">${esc(v)}</div></div>`).join('');
+  const on = engine && engine.running;
+  document.getElementById('eng-dot').className = 'dot ' + (on ? 'on' : 'off');
+  document.getElementById('eng-text').textContent = 'Engine: ' + (on ? `đang chạy (pid ${engine.pid})` : 'chưa chạy');
+}
+
+function renderBlocked(list, engine, summary) {
+  const pill = document.getElementById('blk-pill');
+  const btnCleanup = document.getElementById('btn-cleanup');
+  const onCount = summary && summary.online !== undefined ? summary.online : (list ? list.length : 0);
+  const offCount = summary && summary.offline !== undefined ? summary.offline : 0;
+
+  if (list && list.length) {
+    pill.style.display = '';
+    const ticks = engine && engine.total_ticks ? engine.total_ticks : 0;
+    const pkts = engine && engine.total_packets ? engine.total_packets : 0;
+    let desc = `Đang chặn: <b>${onCount}</b> trực tuyến`;
+    if (offCount > 0) {
+      desc += ` <span style="color:#fb923c">(+<b>${offCount}</b> đã đổi mạng/rời LAN)</span>`;
+    }
+    pill.innerHTML = `<span class="dot" style="background:${onCount > 0 ? 'var(--danger)' : '#fb923c'}"></span>${desc} (Chu kỳ 1s &bull; ${ticks} đợt / ${pkts} gói)`;
+    if (btnCleanup) btnCleanup.style.display = offCount > 0 ? '' : 'none';
+  } else {
+    pill.style.display = 'none';
+    if (btnCleanup) btnCleanup.style.display = 'none';
+  }
+}
+
+function renderDevices(devices, blocked) {
+  if (devices) lastDevices = devices;
+  if (blocked !== null && blocked !== undefined) lastBlocked = blocked;
+
+  const blkMap = new Map();
+  (lastBlocked || []).forEach(b => blkMap.set(b.ip, b));
+
+  // Tập hợp danh sách hiển thị: kết hợp thiết bị quét được + thiết bị đang chặn nhưng offline
+  const allMap = new Map();
+  (lastDevices || []).forEach(d => allMap.set(d.ip, { ...d }));
+  (lastBlocked || []).forEach(b => {
+    if (!allMap.has(b.ip)) {
+      allMap.set(b.ip, {
+        ip: b.ip,
+        mac: b.mac,
+        name: b.name || '',
+        role: 'device',
+        type: 'Không rõ',
+        os: '—',
+        icon: '❓',
+        vendor: '—',
+        blocked: true,
+        block_status: b.status || 'offline'
+      });
+    }
+  });
+
+  const displayList = Array.from(allMap.values());
+
+  // Cập nhật số lượng từng nhóm trên Category Tabs
+  let cAll = 0, cPhone = 0, cComp = 0, cUnk = 0, cBlk = 0;
+  displayList.forEach(d => {
+    cAll++;
+    const g = getDeviceGroup(d);
+    if (g === 'phone') cPhone++;
+    else if (g === 'computer') cComp++;
+    else cUnk++;
+    if (blkMap.has(d.ip) || d.blocked) cBlk++;
+  });
+
+  const elAll = document.getElementById('cnt-all'); if (elAll) elAll.textContent = cAll;
+  const elPhone = document.getElementById('cnt-phone'); if (elPhone) elPhone.textContent = cPhone;
+  const elComp = document.getElementById('cnt-comp'); if (elComp) elComp.textContent = cComp;
+  const elUnk = document.getElementById('cnt-unknown'); if (elUnk) elUnk.textContent = cUnk;
+
+  const elBlk = document.getElementById('cnt-blocked');
+  if (elBlk) {
+    const onBlk = (lastBlocked || []).filter(b => b.status !== 'offline').length;
+    const offBlk = (lastBlocked || []).filter(b => b.status === 'offline').length;
+    if (offBlk > 0) {
+      elBlk.innerHTML = `${onBlk} <span style="font-size:10px;opacity:0.9">(+${offBlk} off)</span>`;
+    } else {
+      elBlk.textContent = onBlk;
+    }
+  }
+
+  const body = document.getElementById('rows');
+  const q = (document.getElementById('search-input')?.value || '').trim().toLowerCase();
+
+  // Lọc theo nhóm và từ khoá
+  const filtered = displayList.filter(d => {
+    const isBlocked = blkMap.has(d.ip) || d.blocked;
+    const g = getDeviceGroup(d);
+    if (currentCategory === 'phone' && g !== 'phone') return false;
+    if (currentCategory === 'computer' && g !== 'computer') return false;
+    if (currentCategory === 'unknown' && g !== 'unknown') return false;
+    if (currentCategory === 'blocked' && !isBlocked) return false;
+
+    if (q) {
+      const hay = `${d.name || ''} ${d.ip || ''} ${d.mac || ''} ${d.type || ''} ${d.os || ''} ${d.vendor || ''}`.toLowerCase().replace(/[-_]/g, '');
+      const cleanQ = q.replace(/[-_]/g, '');
+      return hay.includes(cleanQ) || `${d.name || ''} ${d.ip || ''} ${d.mac || ''}`.toLowerCase().includes(q);
+    }
+    return true;
+  });
+
+  if (!filtered.length) {
+    const msg = q
+      ? `Không tìm thấy thiết bị khớp từ khoá "${esc(q)}"`
+      : (currentCategory !== 'all' ? 'Không có thiết bị nào trong nhóm này.' : 'Không thấy thiết bị nào.');
+    body.innerHTML = `<tr><td colspan="7" class="empty">${msg}</td></tr>`;
+    return;
+  }
+
+  body.innerHTML = filtered.map(d => {
+    const blkInfo = blkMap.get(d.ip);
+    const isBlocked = !!blkInfo || d.blocked;
+    const isOffline = blkInfo && blkInfo.status === 'offline';
+
+    const g = getDeviceGroup(d);
+    let grpBadge = '';
+    if (g === 'phone') grpBadge = '<span class="grp-tag grp-phone">Điện thoại</span>';
+    else if (g === 'computer') grpBadge = '<span class="grp-tag grp-computer">Máy tính</span>';
+    else grpBadge = '<span class="grp-tag grp-unknown">Chưa rõ</span>';
+
+    let roleTag = '<span class="tag dev">Thiết bị</span>';
+    if (d.role === 'gateway') roleTag = '<span class="tag gw">Gateway</span>';
+    else if (d.role === 'self') roleTag = '<span class="tag self">Máy này</span>';
+
+    if (isBlocked) {
+      if (isOffline) {
+        roleTag += ' <span class="tag blk-offline" title="Thiết bị không phản hồi ping/ARP: Đã ngắt Wi-Fi hoặc đổi mạng">⚠️ Đã đổi mạng / Ngoại tuyến</span>';
+      } else {
+        roleTag += ' <span class="tag blk">⛔ Đang chặn</span>';
+      }
+    }
+
+    let action = '';
+    if (d.role === 'device') {
+      action = isBlocked
+        ? `<button class="mini" onclick="unblock('${d.ip}')">Bỏ chặn</button>`
+        : `<button class="mini danger" onclick="block('${d.ip}','${esc(d.mac)}','${esc(d.name||'')}')">Chặn</button>`;
+    } else {
+      action = '<span style="color:var(--muted);font-size:12px">—</span>';
+    }
+
+    const dispName = d.name || (blkInfo && blkInfo.name) || '<span style="color:var(--muted)">(không tên)</span>';
+    const osLine = (d.os && d.os !== '—') ? `<span class="os">${esc(d.os)}</span>` : '';
+    const conf = d.confidence && d.confidence !== '—' && d.confidence !== 'cao'
+      ? `<span class="conf" title="Độ tin cậy nhận diện">~${esc(d.confidence)}</span>` : '';
+
+    const rowClass = isBlocked ? (isOffline ? 'row-offline' : 'row-blocked') : '';
+
+    return `<tr class="${rowClass}">
+      <td class="dev-name"><span class="dev-ic">${d.icon || '❓'}</span> <b>${dispName}</b> ${grpBadge}</td>
+      <td><span class="dtype">${esc(d.type || 'Không rõ')}</span> ${osLine} ${conf}</td>
+      <td><b>${esc(d.ip)}</b></td>
+      <td class="mac">${esc(d.mac)}</td>
+      <td>${esc(d.vendor)}</td>
+      <td>${roleTag}</td>
+      <td style="text-align:right">${action}</td></tr>`;
+  }).join('');
+}
+
+async function doScan() {
+  if (scanning) return; scanning = true;
+  const b = document.getElementById('btn-scan');
+  b.disabled = true; b.innerHTML = '<span class="spin"></span> Đang quét…';
+  try {
+    const r = await api('/api/scan');
+    if (!r.ok) { toast(r.error || 'Quét thất bại', 'err'); }
+    else {
+      const st = await api('/api/status');
+      renderInfo(r.info, st.engine);
+      renderBlocked(st.blocked, st.engine, st.blocked_summary);
+      renderDevices(r.devices, st.blocked);
+      toast(`Tìm thấy ${r.count} thiết bị`);
+    }
+  } catch (e) { toast('Lỗi: ' + e, 'err'); }
+  finally { scanning = false; b.disabled = false; b.innerHTML = '🔍 Quét mạng'; refreshStatus(); }
+}
+
+async function block(ip, mac, name) {
+  const iv = parseInt(document.getElementById('interval').value, 10);
+  toast(`Đang chặn ${name || ip} … (có thể cần nhập mật khẩu admin)`);
+  const r = await api('/api/block', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ ip, mac, name: name || '', interval_ms: iv })
+  });
+  toast(r.ok ? r.message : ('Lỗi: ' + (r.error || '?')), r.ok ? 'ok' : 'err');
+  refreshStatus();
+}
+
+async function unblock(ip) {
+  const r = await api('/api/unblock', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ ip })
+  });
+  toast(r.ok ? r.message : ('Lỗi: ' + r.error), r.ok ? 'ok' : 'err');
+  refreshStatus();
+}
+
+async function doStop() {
+  const r = await api('/api/stop', { method: 'POST' });
+  toast(r.ok ? r.message : ('Lỗi: ' + r.error), r.ok ? 'ok' : 'err');
+  refreshStatus();
+}
+
+async function doCleanupOffline() {
+  const r = await api('/api/cleanup_offline', { method: 'POST' });
+  toast(r.ok ? r.message : ('Lỗi: ' + r.error), r.ok ? 'ok' : 'err');
+  refreshStatus();
+}
+
+async function doSniff() {
+  const b = document.getElementById('btn-sniff');
+  b.disabled = true;
+  toast('Đang bật bắt tên DHCP… (có thể cần nhập mật khẩu admin)');
+  const r = await api('/api/sniff', { method: 'POST' });
+  toast(r.ok ? 'Đã bật bắt tên DHCP — chờ thiết bị kết nối/gia hạn IP' : ('Lỗi: ' + (r.error || '?')), r.ok ? 'ok' : 'err');
+  b.disabled = false; refreshStatus();
+}
+
+function renderSniffer(sniffer) {
+  const on = sniffer && sniffer.running;
+  document.getElementById('sniff-dot').className = 'dot ' + (on ? 'on' : 'off');
+  document.getElementById('sniff-text').textContent = on
+    ? `Bắt tên: bật (${sniffer.count || 0} tên)` : 'Bắt tên: tắt';
+  document.getElementById('btn-sniff').style.display = on ? 'none' : '';
+}
+
+async function refreshStatus() {
+  try {
+    const s = await api('/api/status');
+    renderInfo(s.info, s.engine);
+    renderBlocked(s.blocked, s.engine, s.blocked_summary);
+    renderSniffer(s.sniffer);
+    renderDefense(s.defense);
+    handleThreats(s.threats);
+    handleEvents(s.events);
+    renderDevices(lastDevices, s.blocked);
+  } catch (e) {}
+}
+
+refreshStatus();
+setInterval(refreshStatus, 1200);
+</script>
+</body>
+</html>

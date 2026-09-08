@@ -1,0 +1,20 @@
+# Ảnh chỉ chứa công cụ Java (JDK + apktool) để AdFree gọi khi máy chưa cài Java.
+# Server vẫn chạy bằng Python trên máy; container chỉ được gọi cho từng lệnh
+# apktool/keytool/jarsigner rồi thoát.
+#
+# Ảnh này được server tự dựng lần đầu; không cần build tay:
+#   docker build -t adfree-tools:1 -f adfree/Dockerfile.tools adfree
+FROM eclipse-temurin:17-jdk-jammy
+
+ARG APKTOOL_VERSION=2.9.3
+RUN apt-get update \
+ && apt-get install -y --no-install-recommends curl ca-certificates \
+ && curl -fsSL -o /opt/apktool.jar \
+      "https://github.com/iBotPeaches/Apktool/releases/download/v${APKTOOL_VERSION}/apktool_${APKTOOL_VERSION}.jar" \
+ && apt-get purge -y curl && apt-get autoremove -y \
+ && rm -rf /var/lib/apt/lists/*
+
+# apktool ghi file tạm vào HOME; trỏ vào /tmp để chạy được với user bất kỳ
+ENV HOME=/tmp
+WORKDIR /tmp
+ENTRYPOINT []

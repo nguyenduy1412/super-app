@@ -1,0 +1,20 @@
+module.exports = {};
+
+module.exports['_copyright-notice'] = require('./_copyright-notice-license');
+module.exports['agpl-3.0'] = require('./agpl-3.0-license');
+module.exports['apache-2.0'] = require('./apache-2.0-license');
+module.exports['artistic-2.0'] = require('./artistic-2.0-license');
+module.exports['bsd-2-clause'] = require('./bsd-2-clause-license');
+module.exports['bsd-3-clause'] = require('./bsd-3-clause-license');
+module.exports['cc0-1.0'] = require('./cc0-1.0-license');
+module.exports['epl-1.0'] = require('./epl-1.0-license');
+module.exports['gpl-2.0'] = require('./gpl-2.0-license');
+module.exports['gpl-3.0'] = require('./gpl-3.0-license');
+module.exports.isc = require('./isc-license');
+module.exports['lgpl-2.1'] = require('./lgpl-2.1-license');
+module.exports['lgpl-3.0'] = require('./lgpl-3.0-license');
+module.exports.mit = require('./mit-license');
+module.exports['mpl-2.0'] = require('./mpl-2.0-license');
+module.exports['ofl-1.1'] = require('./ofl-1.1-license');
+module.exports['osl-3.0'] = require('./osl-3.0-license');
+module.exports.unlicense = require('./unlicense-license');

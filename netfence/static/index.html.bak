@@ -1,0 +1,365 @@
+<!DOCTYPE html>
+<html lang="vi">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>NetFence — LAN Inventory & Access Control</title>
+<style>
+  :root{
+    --bg:#0b1120; --panel:#111a2e; --panel2:#0f1626; --line:#1e2b45;
+    --text:#e5edff; --muted:#8aa0c6; --accent:#f59e0b; --accent2:#fb7185;
+    --ok:#34d399; --danger:#f87171; --warn:#fbbf24;
+  }
+  *{box-sizing:border-box}
+  body{margin:0;background:radial-gradient(1200px 600px at 80% -10%,rgba(245,158,11,.10),transparent),var(--bg);
+    color:var(--text);font:14px/1.5 -apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif;}
+  .wrap{max-width:1080px;margin:0 auto;padding:22px 20px 60px;}
+  h1{font-size:20px;margin:0;display:flex;align-items:center;gap:10px}
+  .badge{font-size:11px;font-weight:700;padding:3px 9px;border-radius:999px;background:rgba(245,158,11,.15);color:var(--accent);border:1px solid rgba(245,158,11,.3)}
+  .sub{color:var(--muted);font-size:12.5px;margin-top:4px}
+  .banner{margin:16px 0;padding:11px 14px;border-radius:12px;background:rgba(251,113,133,.08);
+    border:1px solid rgba(251,113,133,.25);color:#ffc9d2;font-size:12.5px;display:flex;gap:10px;align-items:flex-start}
+  .grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(150px,1fr));gap:10px;margin:14px 0}
+  .stat{background:var(--panel);border:1px solid var(--line);border-radius:12px;padding:11px 13px}
+  .stat .k{color:var(--muted);font-size:11px;text-transform:uppercase;letter-spacing:.04em}
+  .stat .v{font-size:14px;font-weight:600;margin-top:3px;word-break:break-all}
+  .bar{display:flex;gap:10px;align-items:center;flex-wrap:wrap;margin:14px 0}
+  button{font:inherit;cursor:pointer;border-radius:10px;border:1px solid var(--line);
+    background:var(--panel);color:var(--text);padding:9px 15px;font-weight:600;transition:.15s}
+  button:hover{border-color:var(--accent);transform:translateY(-1px)}
+  button:disabled{opacity:.5;cursor:not-allowed;transform:none}
+  button.primary{background:linear-gradient(135deg,#f59e0b,#f97316);border:none;color:#1a1200}
+  button.danger{background:transparent;border-color:rgba(248,113,113,.4);color:var(--danger)}
+  button.mini{padding:6px 12px;font-size:12.5px}
+  .pill{font-size:12px;padding:5px 11px;border-radius:999px;border:1px solid var(--line);display:inline-flex;gap:7px;align-items:center}
+  .dot{width:8px;height:8px;border-radius:50%;background:var(--muted)}
+  .dot.on{background:var(--ok);box-shadow:0 0 8px var(--ok)}
+  .dot.off{background:var(--muted)}
+  table{width:100%;border-collapse:collapse;margin-top:8px;background:var(--panel2);border-radius:12px;overflow:hidden}
+  th,td{text-align:left;padding:10px 12px;border-bottom:1px solid var(--line);font-size:13px}
+  th{color:var(--muted);font-size:11px;text-transform:uppercase;letter-spacing:.04em;background:var(--panel)}
+  tr:last-child td{border-bottom:none}
+  td.mac{font-family:ui-monospace,Menlo,monospace;color:#cbd5e1;font-size:12px}
+  .tag{font-size:10.5px;padding:2px 7px;border-radius:6px;font-weight:700}
+  .tag.gw{background:rgba(52,211,153,.15);color:var(--ok)}
+  .tag.self{background:rgba(96,165,250,.15);color:#60a5fa}
+  .tag.dev{background:rgba(148,163,184,.12);color:var(--muted)}
+  .tag.blk{background:rgba(248,113,113,.18);color:var(--danger)}
+  .row-blocked{background:rgba(248,113,113,.06)}
+  .empty{padding:40px;text-align:center;color:var(--muted)}
+  .spin{display:inline-block;width:14px;height:14px;border:2px solid rgba(255,255,255,.25);
+    border-top-color:var(--accent);border-radius:50%;animation:sp .7s linear infinite;vertical-align:-2px}
+  @keyframes sp{to{transform:rotate(360deg)}}
+  .toast{position:fixed;left:50%;bottom:24px;transform:translateX(-50%) translateY(20px);opacity:0;
+    background:#0f1830;border:1px solid var(--line);padding:11px 18px;border-radius:12px;font-size:13px;
+    box-shadow:0 12px 40px rgba(0,0,0,.5);transition:.25s;pointer-events:none;z-index:99}
+  .toast.show{opacity:1;transform:translateX(-50%) translateY(0)}
+  .toast.err{border-color:rgba(248,113,113,.5);color:#ffc9c9}
+  .toast.ok{border-color:rgba(52,211,153,.5)}
+  select{font:inherit;background:var(--panel);color:var(--text);border:1px solid var(--line);border-radius:8px;padding:5px 8px}
+  .dev-name .dev-ic{font-size:16px}
+  .dtype{font-weight:600}
+  .os{font-size:11px;color:var(--muted);margin-left:5px}
+  .conf{font-size:10px;color:#7c8db5;margin-left:4px;font-style:italic}
+
+  .category-tabs{display:flex;gap:8px;align-items:center;flex-wrap:wrap;margin:10px 0 14px;}
+  .cat-tab{font:inherit;font-size:12.5px;padding:6px 14px;border-radius:20px;border:1px solid var(--line);
+    background:var(--panel);color:var(--muted);font-weight:600;display:inline-flex;align-items:center;gap:6px;transition:.15s;cursor:pointer;}
+  .cat-tab:hover{border-color:var(--accent);color:var(--text);transform:translateY(-1px);}
+  .cat-tab.active{background:rgba(245,158,11,.15);border-color:var(--accent);color:var(--accent);}
+  .badge-count{font-size:11px;padding:1px 6px;border-radius:10px;background:rgba(255,255,255,.08);color:var(--text);}
+  .cat-tab.active .badge-count{background:var(--accent);color:#1a1200;font-weight:700;}
+  .badge-count.danger{background:rgba(248,113,113,.2);color:var(--danger);}
+  .cat-tab.active .badge-count.danger{background:var(--danger);color:#fff;}
+  .grp-tag{font-size:10px;padding:2px 6px;border-radius:6px;margin-left:6px;font-weight:600;text-transform:uppercase;letter-spacing:0.3px;}
+  .grp-phone{background:rgba(52,211,153,.15);color:#34d399;border:1px solid rgba(52,211,153,.3);}
+  .grp-computer{background:rgba(59,130,246,.15);color:#60a5fa;border:1px solid rgba(59,130,246,.3);}
+  .grp-unknown{background:rgba(148,163,184,.15);color:#94a3b8;border:1px solid rgba(148,163,184,.3);}
+</style>
+</head>
+<body>
+<div class="wrap">
+  <h1>📡 NetFence <span class="badge">LAN Access Control</span></h1>
+  <div class="sub">Kiểm kê thiết bị trong mạng nội bộ & chặn / bỏ chặn truy cập (đảo ngược được) theo cơ chế ARP.</div>
+
+  <div class="banner">
+    <span>⚠️</span>
+    <div><b>Chỉ dùng cho mạng của chính bạn / môi trường được ủy quyền.</b>
+    Việc "Chặn" sử dụng cơ chế kết hợp ARP (IPv4 2 chiều) & ICMPv6 NDP/RA (IPv6) trỏ về Blackhole MAC để thiết bị đích mất kết nối ra internet hoàn toàn. <b>Lưu ý:</b> Khi thử nghiệm trên smartphone, vui lòng tạm tắt 4G/5G để tránh tính năng <i>Trợ lý Wi-Fi (Wi-Fi Assist)</i> tự nhảy mạng di động.</div>
+  </div>
+
+  <div class="grid" id="info"></div>
+
+  <div class="bar">
+    <button class="primary" id="btn-scan" onclick="doScan()">🔍 Quét mạng</button>
+    <button class="danger" id="btn-stop" onclick="doStop()">⛔ Bỏ chặn tất cả & tắt engine</button>
+    <button id="btn-sniff" onclick="doSniff()">📛 Bắt tên (DHCP)</button>
+    <span class="pill"><span class="dot" id="eng-dot"></span><span id="eng-text">Engine: —</span></span>
+    <span class="pill" id="sniff-pill"><span class="dot" id="sniff-dot"></span><span id="sniff-text">Bắt tên: tắt</span></span>
+    <span class="pill" id="blk-pill" style="display:none"></span>
+    <span style="flex:1"></span>
+    <input type="text" id="search-input" placeholder="🔎 Tìm tên, IP, MAC (vd: poco)..." oninput="filterDevices()" style="font:inherit;font-size:13px;background:var(--panel);color:var(--text);border:1px solid var(--line);border-radius:8px;padding:5px 10px;width:220px">
+    <label class="pill">Nhịp ARP
+      <select id="interval">
+        <option value="500">500 ms (0.5 giây)</option>
+        <option value="1000" selected>1000 ms (1 giây - Mặc định)</option>
+        <option value="2000">2000 ms (2 giây)</option>
+      </select>
+    </label>
+  </div>
+
+  
+  <div class="category-tabs">
+    <button class="cat-tab active" data-cat="all" onclick="selectCategory('all')">
+      Tất cả <span class="badge-count" id="cnt-all">0</span>
+    </button>
+    <button class="cat-tab" data-cat="phone" onclick="selectCategory('phone')">
+      📱 Điện thoại <span class="badge-count" id="cnt-phone">0</span>
+    </button>
+    <button class="cat-tab" data-cat="computer" onclick="selectCategory('computer')">
+      💻 Máy tính <span class="badge-count" id="cnt-comp">0</span>
+    </button>
+    <button class="cat-tab" data-cat="unknown" onclick="selectCategory('unknown')">
+      ❓ Không xác định <span class="badge-count" id="cnt-unknown">0</span>
+    </button>
+    <button class="cat-tab" data-cat="blocked" onclick="selectCategory('blocked')" style="color:var(--danger)">
+      ⛔ Đang chặn <span class="badge-count danger" id="cnt-blocked">0</span>
+    </button>
+  </div>
+
+  <table id="tbl">
+    <thead><tr><th>Thiết bị</th><th>Loại / OS</th><th>IP</th><th>MAC</th><th>Nhà sản xuất</th><th>Vai trò</th><th style="text-align:right">Hành động</th></tr></thead>
+    <tbody id="rows"><tr><td colspan="7" class="empty">Bấm <b>Quét mạng</b> để bắt đầu.</td></tr></tbody>
+  </table>
+</div>
+
+<div class="toast" id="toast"></div>
+
+<script>
+let scanning=false, lastDevices=[], lastBlocked=[];
+
+function filterDevices(){
+  renderDevices(lastDevices, lastBlocked);
+}
+let currentCategory = 'all';
+
+function getDeviceGroup(d) {
+  const icon = d.icon || '';
+  const t = (d.type || '').toLowerCase();
+  const os = (d.os || '').toLowerCase();
+  const name = (d.name || '').toLowerCase();
+
+  // 1. Điện thoại
+  if (
+    icon === '📱' ||
+    ['iphone', 'xiaomi', 'samsung', 'android phone', 'android'].includes(t) ||
+    os === 'ios' || os.startsWith('ios ') || os === 'android' || os.startsWith('android ') ||
+    ['iphone', 'galaxy', 'poco', 'redmi', 'xiaomi', 'oppo', 'reno', 'vivo', 'zhen-wo', 'sm-'].some(k => name.includes(k)) ||
+    ['iphone', 'xiaomi', 'samsung', 'pixel', 'redmi', 'poco', 'oppo', 'vivo', 'huawei', 'honor', 'realme', 'oneplus'].some(k => t.includes(k))
+  ) {
+    return 'phone';
+  }
+
+  // 2. Máy tính
+  if (
+    ['💻', '🪟', '🍎'].includes(icon) ||
+    ['macbook', 'mac', 'imac', 'windows pc', 'máy này (mac)'].includes(t) ||
+    os === 'macos' || os.startsWith('macos ') || os === 'windows' || os.startsWith('windows ') ||
+    ['macbook', 's-mac', 'mac-', '-mac', 'desktop-', 'win-', 'pc-', 'minipc', 'laptop', 'kaizer-mac', 'ducanh2610', 'mot-con-ca'].some(k => name.includes(k)) ||
+    ['windows', 'macbook', 'imac', 'desktop', 'laptop'].some(k => t.includes(k))
+  ) {
+    return 'computer';
+  }
+
+  // 3. Không xác định / Khác
+  return 'unknown';
+}
+
+function selectCategory(cat) {
+  currentCategory = cat;
+  document.querySelectorAll('.cat-tab').forEach(b => b.classList.toggle('active', b.dataset.cat === cat));
+  renderDevices(lastDevices, lastBlocked);
+}
+
+
+function toast(msg,kind='ok'){
+  const t=document.getElementById('toast');
+  t.textContent=msg; t.className='toast show '+kind;
+  clearTimeout(t._t); t._t=setTimeout(()=>t.className='toast',2200);
+}
+async function api(path,opts){
+  const r=await fetch(path,opts); return r.json();
+}
+function esc(s){return (s||'').replace(/[&<>"]/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]));}
+
+function renderInfo(info,engine){
+  const g=document.getElementById('info');
+  const rows=[
+    ['Interface',info.interface||'—'],
+    ['IP máy này',info.ip||'—'],
+    ['MAC máy này',info.mac||'—'],
+    ['Subnet',info.cidr||'—'],
+    ['Gateway IPv4',info.gateway_ip?`${info.gateway_ip} (${esc(info.gateway_mac||'')})`:'—'],
+    ['Gateway IPv6',info.gateway_ip6?`${esc(info.gateway_ip6)}`:'— (IPv4 Only)'],
+  ];
+  g.innerHTML=rows.map(([k,v])=>`<div class="stat"><div class="k">${k}</div><div class="v">${esc(v)}</div></div>`).join('');
+  const on=engine&&engine.running;
+  document.getElementById('eng-dot').className='dot '+(on?'on':'off');
+  document.getElementById('eng-text').textContent='Engine: '+(on?`đang chạy (pid ${engine.pid})`:'chưa chạy');
+}
+function renderBlocked(list, engine){
+  const pill=document.getElementById('blk-pill');
+  if(list&&list.length){
+    pill.style.display='';
+    const ticks = engine && engine.total_ticks ? engine.total_ticks : 0;
+    const pkts = engine && engine.total_packets ? engine.total_packets : 0;
+    pill.innerHTML=`<span class="dot" style="background:var(--danger)"></span>Đang chặn: <b>${list.length}</b> (Phát tín hiệu mỗi 1s &bull; Đã gửi: <b>${ticks}</b> đợt / ${pkts} gói)`;
+  } else {
+    pill.style.display='none';
+  }
+}
+
+function renderDevices(devices,blocked){
+  if(devices) lastDevices=devices;
+  if(blocked!==null && blocked!==undefined) lastBlocked=blocked;
+  const blkSet=new Set((lastBlocked||[]).map(b=>b.ip));
+
+  // Cập nhật số lượng từng nhóm trên Category Tabs
+  let cAll=0, cPhone=0, cComp=0, cUnk=0, cBlk=0;
+  (lastDevices||[]).forEach(d => {
+    cAll++;
+    const g = getDeviceGroup(d);
+    if(g === 'phone') cPhone++;
+    else if(g === 'computer') cComp++;
+    else cUnk++;
+    if(blkSet.has(d.ip) || d.blocked) cBlk++;
+  });
+  const elAll=document.getElementById('cnt-all'); if(elAll) elAll.textContent=cAll;
+  const elPhone=document.getElementById('cnt-phone'); if(elPhone) elPhone.textContent=cPhone;
+  const elComp=document.getElementById('cnt-comp'); if(elComp) elComp.textContent=cComp;
+  const elUnk=document.getElementById('cnt-unknown'); if(elUnk) elUnk.textContent=cUnk;
+  const elBlk=document.getElementById('cnt-blocked'); if(elBlk) elBlk.textContent=cBlk;
+
+  const body=document.getElementById('rows');
+  const q=(document.getElementById('search-input')?.value||'').trim().toLowerCase();
+
+  // Lọc theo nhóm và từ khoá
+  const filtered = (lastDevices||[]).filter(d => {
+    const isBlocked = blkSet.has(d.ip) || d.blocked;
+    const g = getDeviceGroup(d);
+    if(currentCategory === 'phone' && g !== 'phone') return false;
+    if(currentCategory === 'computer' && g !== 'computer') return false;
+    if(currentCategory === 'unknown' && g !== 'unknown') return false;
+    if(currentCategory === 'blocked' && !isBlocked) return false;
+
+    if(q){
+      const hay = `${d.name||''} ${d.ip||''} ${d.mac||''} ${d.type||''} ${d.os||''} ${d.vendor||''}`.toLowerCase().replace(/[-_]/g, '');
+      const cleanQ = q.replace(/[-_]/g, '');
+      return hay.includes(cleanQ) || `${d.name||''} ${d.ip||''} ${d.mac||''}`.toLowerCase().includes(q);
+    }
+    return true;
+  });
+
+  if(!filtered.length){
+    const msg = q
+      ? `Không tìm thấy thiết bị khớp từ khoá "${esc(q)}"`
+      : (currentCategory !== 'all' ? 'Không có thiết bị nào trong nhóm này.' : 'Không thấy thiết bị nào.');
+    body.innerHTML=`<tr><td colspan="7" class="empty">${msg}</td></tr>`;
+    return;
+  }
+
+  body.innerHTML=filtered.map(d=>{
+    const isBlocked=blkSet.has(d.ip)||d.blocked;
+    const g = getDeviceGroup(d);
+    let grpBadge = '';
+    if(g === 'phone') grpBadge = '<span class="grp-tag grp-phone">Điện thoại</span>';
+    else if(g === 'computer') grpBadge = '<span class="grp-tag grp-computer">Máy tính</span>';
+    else grpBadge = '<span class="grp-tag grp-unknown">Chưa rõ</span>';
+
+    let roleTag='<span class="tag dev">Thiết bị</span>';
+    if(d.role==='gateway')roleTag='<span class="tag gw">Gateway</span>';
+    else if(d.role==='self')roleTag='<span class="tag self">Máy này</span>';
+    if(isBlocked)roleTag+=' <span class="tag blk">Đã chặn</span>';
+
+    let action='';
+    if(d.role==='device'){
+      action=isBlocked
+        ? `<button class="mini" onclick="unblock('${d.ip}')">Bỏ chặn</button>`
+        : `<button class="mini danger" onclick="block('${d.ip}','${esc(d.mac)}')">Chặn</button>`;
+    }else{
+      action='<span style="color:var(--muted);font-size:12px">—</span>';
+    }
+
+    const dispName=d.name||'<span style="color:var(--muted)">(không tên)</span>';
+    const osLine=(d.os&&d.os!=='—')?`<span class="os">${esc(d.os)}</span>`:'';
+    const conf=d.confidence&&d.confidence!=='—'&&d.confidence!=='cao'
+      ? `<span class="conf" title="Độ tin cậy nhận diện">~${esc(d.confidence)}</span>`:'';
+
+    return `<tr class="${isBlocked?'row-blocked':''}">
+      <td class="dev-name"><span class="dev-ic">${d.icon||'❓'}</span> <b>${dispName}</b> ${grpBadge}</td>
+      <td><span class="dtype">${esc(d.type||'Không rõ')}</span> ${osLine} ${conf}</td>
+      <td><b>${esc(d.ip)}</b></td>
+      <td class="mac">${esc(d.mac)}</td>
+      <td>${esc(d.vendor)}</td>
+      <td>${roleTag}</td>
+      <td style="text-align:right">${action}</td></tr>`;
+  }).join('');
+}
+
+async function doScan(){
+  if(scanning)return; scanning=true;
+  const b=document.getElementById('btn-scan');
+  b.disabled=true; b.innerHTML='<span class="spin"></span> Đang quét…';
+  try{
+    const r=await api('/api/scan');
+    if(!r.ok){toast(r.error||'Quét thất bại','err');}
+    else{renderInfo(r.info,(await api('/api/status')).engine);renderDevices(r.devices,null);toast(`Tìm thấy ${r.count} thiết bị`);}
+  }catch(e){toast('Lỗi: '+e,'err');}
+  finally{scanning=false;b.disabled=false;b.innerHTML='🔍 Quét mạng';refreshStatus();}
+}
+async function block(ip,mac){
+  const iv=parseInt(document.getElementById('interval').value,10);
+  toast('Đang chặn '+ip+' … (có thể cần nhập mật khẩu admin)');
+  const r=await api('/api/block',{method:'POST',headers:{'Content-Type':'application/json'},
+    body:JSON.stringify({ip,mac,interval_ms:iv})});
+  toast(r.ok?r.message:('Lỗi: '+(r.error||'?')),r.ok?'ok':'err');
+  refreshStatus();
+}
+async function unblock(ip){
+  const r=await api('/api/unblock',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({ip})});
+  toast(r.ok?r.message:('Lỗi: '+r.error),r.ok?'ok':'err');
+  refreshStatus();
+}
+async function doStop(){
+  const r=await api('/api/stop',{method:'POST'});
+  toast(r.ok?r.message:('Lỗi: '+r.error),r.ok?'ok':'err');
+  refreshStatus();
+}
+async function doSniff(){
+  const b=document.getElementById('btn-sniff');
+  b.disabled=true;
+  toast('Đang bật bắt tên DHCP… (có thể cần nhập mật khẩu admin)');
+  const r=await api('/api/sniff',{method:'POST'});
+  toast(r.ok?'Đã bật bắt tên DHCP — chờ thiết bị kết nối/gia hạn IP':('Lỗi: '+(r.error||'?')),r.ok?'ok':'err');
+  b.disabled=false; refreshStatus();
+}
+function renderSniffer(sniffer){
+  const on=sniffer&&sniffer.running;
+  document.getElementById('sniff-dot').className='dot '+(on?'on':'off');
+  document.getElementById('sniff-text').textContent=on
+    ? `Bắt tên: bật (${sniffer.count||0} tên)` : 'Bắt tên: tắt';
+  document.getElementById('btn-sniff').style.display=on?'none':'';
+}
+async function refreshStatus(){
+  try{
+    const s=await api('/api/status');
+    renderInfo(s.info,s.engine);renderBlocked(s.blocked,s.engine);renderSniffer(s.sniffer);
+    if(lastDevices.length)renderDevices(lastDevices,s.blocked);
+  }catch(e){}
+}
+
+refreshStatus();
+setInterval(refreshStatus,1500);
+</script>
+</body>
+</html>

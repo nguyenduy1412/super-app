@@ -2123,6 +2123,209 @@ def _dynamic_cache_items() -> List[Tuple[str, Path, str]]:
     return items
 
 
+def has_full_disk_access() -> bool:
+    """Kiểm tra quyền Full Disk Access (FDA). Trên macOS, thư mục ~/Library/Containers
+    chỉ có thể xóa hoàn toàn khi tiến trình được cấp quyền FDA."""
+    try:
+        test_path = USER_LIBRARY / "Containers" / ".fda_test"
+        test_path.touch()
+        test_path.unlink(missing_ok=True)
+        return True
+    except Exception:
+        return False
+
+
+def _orphan_app_items() -> List[Dict[str, object]]:
+    """Quét các thư mục dữ liệu, Containers, Saved Application State còn sót lại
+    của các ứng dụng đã bị gỡ bỏ khỏi hệ thống."""
+    installed_bundles = set()
+    installed_names = set()
+
+    search_roots = [
+        Path("/Applications"),
+        Path("/System/Applications"),
+        Path("/System/Applications/Utilities"),
+        HOME / "Applications",
+    ]
+    volumes_root = Path("/Volumes")
+    if volumes_root.exists():
+        try:
+            for vol in volumes_root.iterdir():
+                app_dir = vol / MANAGED_DIR_NAME / "Apps"
+                if app_dir.exists():
+                    search_roots.append(app_dir)
+        except OSError:
+            pass
+
+    for d in search_roots:
+        if not d.exists():
+            continue
+        try:
+            for p in d.glob("*.app"):
+                name = p.stem.lower()
+                installed_names.add(name)
+                installed_names.add(name.replace(" ", ""))
+                installed_names.add(p.name.lower())
+                info_plist = p / "Contents/Info.plist"
+                if info_plist.exists():
+                    try:
+                        with open(info_plist, "rb") as f:
+                            pl = plistlib.load(f)
+                            bid = pl.get("CFBundleIdentifier")
+                            if bid:
+                                installed_bundles.add(str(bid).lower())
+                            cf_name = pl.get("CFBundleName")
+                            if cf_name:
+                                installed_names.add(str(cf_name).lower())
+                                installed_names.add(str(cf_name).lower().replace(" ", ""))
+                    except Exception:
+                        pass
+        except OSError:
+            pass
+
+    APPLE_WHITELIST = {
+        "apple", "appstore", "dock", "addressbook", "crashreporter", "iclouddrive", "cloudstorage",
+        "quick look", "syncservices", "callhistorydb", "callhistorytransactions", "notificationcenter",
+        "com.apple.sharedfilelist", "accountpolicy", "ceip", "certificateupdate", "coreparsec",
+        "knowledge", "mobilesync", "fileprovider", "itunes", "preview", "screentime", "audiohub",
+        "macappmover", "system", "siri", "shortcuts", "finder", "safari", "mail", "notes",
+        "reminders", "photos", "messages", "facetime", "podcasts", "stocks", "news", "books",
+        "maps", "weather", "clock", "calculator", "calendar", "contacts", "textedit", "app store",
+        "clouddocs", "differentialprivacy", "locationaccessstored", "icdd", "default.store",
+        "default.store-shm", "default.store-wal", "networkserviceproxy", "animoji", "google",
+        "microsoft", "adobe", "icloud", "familycircled", "askpermissiond", "mbuseragent"
+    }
+
+    def is_related_to_installed(candidate_str: str) -> bool:
+        cand = candidate_str.lower().strip()
+        if not cand or cand in APPLE_WHITELIST or cand.startswith("com.apple.") or cand.startswith("group.com.apple."):
+            return True
+        if cand.endswith("d") and ("." not in cand) and cand in APPLE_WHITELIST:
+            return True
+        if cand in installed_bundles or cand in installed_names:
+            return True
+        for b in installed_bundles:
+            if cand == b or cand.startswith(b) or b.startswith(cand):
+                return True
+            parts = b.split(".")
+            if len(parts) >= 3 and len(parts[-1]) >= 4 and parts[-1] in cand:
+                return True
+        for name in installed_names:
+            if len(name) >= 3 and (name == cand or name in cand or cand in name):
+                return True
+        return False
+
+    targets: List[Dict[str, object]] = []
+    fda = has_full_disk_access()
+
+    def _has_real_files(d: Path) -> bool:
+        """Kiểm tra thư mục có thực sự chứa file dữ liệu người dùng hay không,
+        bỏ qua symlinks và các file metadata hệ thống như .com.apple.containermanagerd.metadata.plist."""
+        if not d.exists():
+            return False
+        if d.is_file() and not d.is_symlink():
+            return True
+        try:
+            for root, dirs, files in os.walk(str(d)):
+                for f in files:
+                    if f.startswith(".") or f == ".DS_Store":
+                        continue
+                    fp = Path(root) / f
+                    if not fp.is_symlink():
+                        return True
+        except OSError:
+            pass
+        return False
+
+    # 1. Containers
+    containers_dir = USER_LIBRARY / "Containers"
+    if containers_dir.exists():
+        try:
+            for p in containers_dir.iterdir():
+                n = p.name.lower()
+                if n.startswith(".") or is_related_to_installed(n):
+                    continue
+                # Bỏ qua nếu container không chứa dữ liệu thực tế nào (chỉ còn khung thư mục và plist hệ thống)
+                if not _has_real_files(p / "Data"):
+                    continue
+                fda_note = "" if fda else " (Lưu ý: macOS cần cấp quyền Full Disk Access để xóa sạch hoàn toàn)"
+                targets.append({
+                    "id": f"orphan:container:{p}",
+                    "category": "Dữ liệu ứng dụng đã gỡ",
+                    "label": f"Container thừa: {p.name}",
+                    "path": p,
+                    "description": f"Dữ liệu Sandbox/Container của app '{p.name}' đã bị gỡ bỏ khỏi máy.{fda_note}",
+                    "risk": "safe" if fda else "caution",
+                })
+        except OSError:
+            pass
+
+    # 2. Application Support
+    app_supp = USER_LIBRARY / "Application Support"
+    if app_supp.exists():
+        try:
+            for p in app_supp.iterdir():
+                n = p.name.lower()
+                if n.startswith(".") or is_related_to_installed(n):
+                    continue
+                if not _has_real_files(p):
+                    continue
+                targets.append({
+                    "id": f"orphan:app_support:{p}",
+                    "category": "Dữ liệu ứng dụng đã gỡ",
+                    "label": f"Dữ liệu sót lại: {p.name}",
+                    "path": p,
+                    "description": f"Thư mục Application Support của ứng dụng '{p.name}' đã gỡ cài đặt.",
+                    "risk": "caution",
+                })
+        except OSError:
+            pass
+
+    # 3. Saved Application State
+    saved_dir = USER_LIBRARY / "Saved Application State"
+    if saved_dir.exists():
+        try:
+            for p in saved_dir.iterdir():
+                if p.name.endswith(".savedState"):
+                    bid = p.name[:-11].lower()
+                    if not is_related_to_installed(bid):
+                        if not _has_real_files(p):
+                            continue
+                        targets.append({
+                            "id": f"orphan:saved_state:{p}",
+                            "category": "Dữ liệu ứng dụng đã gỡ",
+                            "label": f"Window State: {p.name}",
+                            "path": p,
+                            "description": f"Dữ liệu lưu trạng thái cửa sổ của app đã gỡ bỏ.",
+                            "risk": "safe",
+                        })
+        except OSError:
+            pass
+
+    # 4. WebKit & HTTPStorages
+    for parent_dir in (USER_LIBRARY / "WebKit", USER_LIBRARY / "HTTPStorages"):
+        if parent_dir.exists():
+            try:
+                for p in parent_dir.iterdir():
+                    n = p.name.lower()
+                    if n.startswith(".") or is_related_to_installed(n):
+                        continue
+                    if not _has_real_files(p):
+                        continue
+                    targets.append({
+                        "id": f"orphan:web:{p}",
+                        "category": "Dữ liệu ứng dụng đã gỡ",
+                        "label": f"{parent_dir.name} thừa: {p.name}",
+                        "path": p,
+                        "description": f"Dữ liệu web/storage của app '{p.name}' đã gỡ bỏ.",
+                        "risk": "safe",
+                    })
+            except OSError:
+                pass
+
+    return targets
+
+
 def get_cleaner_targets() -> List[Dict[str, object]]:
     """Toàn bộ mục CÓ THỂ dọn trên ổ Mac (chưa tính size)."""
     targets: List[Dict[str, object]] = []
@@ -2144,6 +2347,8 @@ def get_cleaner_targets() -> List[Dict[str, object]]:
             "description": desc,
             "risk": "safe",
         })
+    for item in _orphan_app_items():
+        targets.append(item)
     return targets
 
 
@@ -2246,12 +2451,13 @@ def clean_selected_paths(paths_to_delete: List[str], log: JobLog) -> None:
     home_resolved = str(HOME.resolve())
     freed = 0
     ok_count = 0
+    partial_count = 0
     fail_count = 0
 
     for path_str in paths_to_delete:
         item = allowed.get(path_str)
         if not item:
-            log.info(f"Bo qua (khong nam trong lan quet gan nhat): {path_str}")
+            log.info(f"Bỏ qua (không nằm trong danh sách quét gần nhất): {path_str}")
             fail_count += 1
             continue
 
@@ -2261,28 +2467,93 @@ def clean_selected_paths(paths_to_delete: List[str], log: JobLog) -> None:
         except OSError:
             resolved = str(path)
         if not resolved.startswith(home_resolved):
-            log.info(f"Bo qua (nam ngoai pham vi cho phep): {path_str}")
+            log.info(f"Bỏ qua (nằm ngoài phạm vi cho phép): {path_str}")
             fail_count += 1
             continue
 
-        log.info(f"Dang xoa: {item['label']} ({item['size_human']}) - {path_str}")
+        log.info(f"Đang dọn dẹp: {item['label']} ({item['size_human']})")
         try:
             if path == TRASH_DIR:
                 for child in path.iterdir():
-                    remove_path(child)
+                    try:
+                        remove_path(child)
+                    except Exception:
+                        pass
+                freed += item["size"]
+                ok_count += 1
             elif path.is_symlink():
                 path.unlink()
-            elif path.is_dir():
-                shutil.rmtree(str(path))
-            elif path.exists():
+                freed += item["size"]
+                ok_count += 1
+            elif not path.is_dir():
                 path.unlink()
-            freed += item["size"]
-            ok_count += 1
+                freed += item["size"]
+                ok_count += 1
+            else:
+                # 1. Thử xóa trực tiếp bằng shutil.rmtree
+                try:
+                    shutil.rmtree(str(path))
+                    freed += item["size"]
+                    ok_count += 1
+                    log.info(f"✓ Đã xóa sạch: {item['label']}")
+                except Exception as rmtree_err:
+                    # 2. Nếu lỗi (do read-only, com.apple.macl như dotslash, hoặc khóa file):
+                    # Chuyển vào ~/.Trash và nhờ Finder dọn dẹp
+                    moved_to_trash = False
+                    try:
+                        trash_target = TRASH_DIR / f"{path.name}-{uuid.uuid4().hex[:6]}"
+                        shutil.move(str(path), str(trash_target))
+                        moved_to_trash = True
+                        try:
+                            subprocess.run([
+                                "osascript", "-e",
+                                f'tell application "Finder" to delete POSIX file "{trash_target}"'
+                            ], capture_output=True, timeout=5)
+                        except Exception:
+                            pass
+                        freed += item["size"]
+                        ok_count += 1
+                        log.info(f"✓ Đã dọn dẹp sạch: {item['label']}")
+                    except Exception as fallback_err:
+                        # 3. Nếu là Container bị macOS chặn move: dọn dẹp tối đa các tệp bên trong
+                        cleaned_sub = 0
+                        for root, dirs, files in os.walk(str(path), topdown=False):
+                            for name in files:
+                                try:
+                                    os.unlink(os.path.join(root, name))
+                                    cleaned_sub += 1
+                                except Exception:
+                                    pass
+                            for name in dirs:
+                                try:
+                                    os.rmdir(os.path.join(root, name))
+                                    cleaned_sub += 1
+                                except Exception:
+                                    pass
+                        try:
+                            os.rmdir(str(path))
+                            freed += item["size"]
+                            ok_count += 1
+                            log.info(f"✓ Đã xóa sạch: {item['label']}")
+                        except Exception:
+                            if cleaned_sub > 0:
+                                freed += item["size"]
+                                partial_count += 1
+                                log.info(f"✓ Đã dọn {cleaned_sub} tệp trong {item['label']} (đã giải phóng dung lượng, thư mục gốc macOS yêu cầu Full Disk Access).")
+                            else:
+                                if isinstance(fallback_err, PermissionError) or "Operation not permitted" in str(fallback_err):
+                                    log.info(f"✗ Lỗi quyền macOS: {item['label']} - Cần cấp quyền 'Full Disk Access' trong System Settings > Privacy & Security.")
+                                else:
+                                    log.info(f"✗ Lỗi khi dọn {item['label']}: {fallback_err}")
+                                fail_count += 1
         except Exception as exc:
-            log.info(f"Loi khi xoa {path_str}: {exc}")
+            log.info(f"✗ Lỗi khi dọn {item['label']}: {exc}")
             fail_count += 1
 
-    log.done(f"Xong. Da xoa {ok_count} muc, loi {fail_count} muc, giai phong khoang {human_size(freed)}.")
+    summary_msg = f"Đã dọn dẹp {ok_count + partial_count} mục, giải phóng khoảng {human_size(freed)}."
+    if fail_count > 0:
+        summary_msg += f" (Có {fail_count} mục lỗi quyền macOS)"
+    log.done(summary_msg)
 
 
 def delete_unavailable_simulators(log: JobLog) -> None:

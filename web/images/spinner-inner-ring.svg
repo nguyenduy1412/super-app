@@ -1,0 +1,11 @@
+<svg width="1826px" height="1826px" viewBox="0 0 1826 1826" version="1.1" xmlns="http://www.w3.org/2000/svg" xmlns:xlink="http://www.w3.org/1999/xlink">
+    <defs></defs>
+    <g id="Page-1" stroke="none" stroke-width="1" fill="none" fill-rule="evenodd">
+        <g id="inner-ring">
+            <g>
+                <circle id="outer-guide" cx="913" cy="913" r="912.5"></circle>
+                <path d="M562.91968,265.769437 C333.644336,390.318057 178,633.232687 178,912.5 C178,1318.70543 507.294567,1648 913.5,1648 L913.5,1648 C1319.70543,1648 1649,1318.70543 1649,912.5 C1649,633.50084 1493.65442,390.784585 1264.74057,266.12854" stroke="#199489" stroke-width="73" stroke-linecap="round"></path>
+            </g>
+        </g>
+    </g>
+</svg>
