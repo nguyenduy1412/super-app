@@ -93,6 +93,13 @@
     border-color: rgba(129, 140, 248, .5);
     background: linear-gradient(180deg, rgba(99, 102, 241, .09), rgba(99, 102, 241, .02));
   }
+  .opt select {
+    margin-top: 9px; padding: 8px 11px; border-radius: 9px;
+    border: 1px solid var(--border); background: var(--panel2);
+    color: var(--text); font: inherit; font-size: 13.5px;
+    max-width: 280px; cursor: pointer;
+  }
+  .opt select:disabled { opacity: .45; cursor: default; }
   .opt-text { flex: 1; min-width: 0; }
   .switch { position: relative; flex: none; align-self: center; margin-left: auto; cursor: pointer; }
   .switch input {
@@ -543,7 +550,7 @@
   <header>
     <div class="logo">🛡️</div>
     <h1>AdFree</h1>
-    <p>Chặn quảng cáo (xuất APK đã ký) hoặc phân tích tài nguyên bên trong APK — chạy hoàn toàn local</p>
+    <p>Chặn quảng cáo · dịch ngôn ngữ (xuất APK đã ký) hoặc phân tích tài nguyên bên trong APK — chạy hoàn toàn local</p>
     <div class="badges">
       <span class="badge"><i style="background:var(--ok)"></i>100% local</span>
       <span class="badge"><i style="background:var(--accent)"></i>Không cần root</span>
@@ -588,6 +595,49 @@
     </span>
   </label>
 
+  <label class="opt" id="translateOpt" for="translateOn">
+    <span class="opt-icon">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><path d="M2 12h20M12 2a15.3 15.3 0 0 1 4 10 15.3 15.3 0 0 1-4 10 15.3 15.3 0 0 1-4-10 15.3 15.3 0 0 1 4-10z"/></svg>
+    </span>
+    <span class="opt-text">
+      <strong>Dịch ngôn ngữ</strong>
+      <small>Dịch text giao diện trong APK sang ngôn ngữ bạn chọn (model chạy local). Hỗ trợ: Kotlin/Java (<code>res/values</code>), React Native (Hermes), Flutter (hook runtime), Unity (IL2CPP/assets). APK đầu ra luôn hiện ngôn ngữ đã chọn.</small>
+      <small id="mtInfo" style="color:var(--muted)"></small>
+      <label style="display:flex;gap:6px;align-items:flex-start;margin-top:6px;font-size:12px;color:var(--muted)">
+        <input type="checkbox" id="translateData" checked style="margin-top:2px">
+        <span><b>Dịch cả dữ liệu nội dung</b> (JSON câu hỏi/bài học trong assets) —
+          khuyến nghị bật nếu muốn app tiếng Việt hoàn toàn. Tắt nếu là app học ngoại ngữ
+          và cần giữ nguyên câu hỏi tiếng gốc.</span>
+      </label>
+      <label style="display:flex;gap:6px;align-items:flex-start;margin-top:4px;font-size:12px;color:var(--muted)">
+        <input type="checkbox" id="translateCode" style="margin-top:2px">
+        <span><b>Dịch chuỗi hardcode trong code</b> (smali Kotlin/Java) —
+          dùng khi app nhét text thẳng vào code thay vì <code>res/values</code>.</span>
+      </label>
+      <select id="translateLang" disabled>
+        <option value="vi">🇻🇳 Tiếng Việt</option>
+        <option value="en">🇬🇧 Tiếng Anh</option>
+        <option value="ja">🇯🇵 Tiếng Nhật</option>
+        <option value="ko">🇰🇷 Tiếng Hàn</option>
+        <option value="zh-CN">🇨🇳 Tiếng Trung (giản thể)</option>
+        <option value="zh-TW">🇹🇼 Tiếng Trung (phồn thể)</option>
+        <option value="fr">🇫🇷 Tiếng Pháp</option>
+        <option value="de">🇩🇪 Tiếng Đức</option>
+        <option value="es">🇪🇸 Tiếng Tây Ban Nha</option>
+        <option value="pt">🇵🇹 Tiếng Bồ Đào Nha</option>
+        <option value="ru">🇷🇺 Tiếng Nga</option>
+        <option value="th">🇹🇭 Tiếng Thái</option>
+        <option value="id">🇮🇩 Tiếng Indonesia</option>
+        <option value="hi">🇮🇳 Tiếng Hindi</option>
+        <option value="ar">🇸🇦 Tiếng Ả Rập</option>
+      </select>
+    </span>
+    <span class="switch">
+      <input type="checkbox" id="translateOn">
+      <span class="switch-track"><span class="switch-thumb"></span></span>
+    </span>
+  </label>
+
   <div class="card hidden" id="jobCard">
     <h2 class="sec-title">Trạng thái xử lý</h2>
     <div class="steps" id="steps"></div>
@@ -614,6 +664,16 @@
       <h2 class="sec-title">📴 Ép SDK nghĩ offline</h2>
       <div id="offlineSummary" class="summary"></div>
       <div class="hooks" id="offlineDetail"></div>
+    </div>
+    <div id="apptechBox" class="subcard hidden">
+      <h2 class="sec-title">🧬 Công nghệ &amp; kho text của app</h2>
+      <div id="apptechSummary" class="summary"></div>
+      <div id="apptechStores" style="margin-top:10px;"></div>
+    </div>
+    <div id="translateBox" class="subcard hidden">
+      <h2 class="sec-title">🌐 Dịch ngôn ngữ</h2>
+      <div id="translateSummary" class="summary"></div>
+      <div id="deepSummary" style="margin-top:8px;"></div>
     </div>
     <details id="compDetails">
       <summary id="compSummary"></summary>
@@ -697,7 +757,7 @@
 <script>
 const $ = (s) => document.querySelector(s);
 const drop = $("#drop"), fileInput = $("#file");
-const STEP_ORDER = ["decode", "assets", "analyze", "patch", "reward", "offline", "build", "sign", "done"];
+const STEP_ORDER = ["decode", "translate", "assets", "analyze", "patch", "reward", "offline", "build", "sign", "done"];
 
 function fmtSize(b) {
   if (b >= 1073741824) return (b / 1073741824).toFixed(2) + " GB";
@@ -739,7 +799,50 @@ fetch("/api/tools").then(r => r.json()).then(t => {
   }
 }).catch(() => {});
 
+// Engine dịch offline: cho biết model nào đã tải sẵn để người dùng biết
+// lần dịch đầu của một ngôn ngữ mới sẽ phải tải thêm (~80 MB/ngôn ngữ).
+fetch("/api/mt").then(r => r.json()).then(mt => {
+  const info = $("#mtInfo"), sel = $("#translateLang");
+  const have = new Set((mt.models || []).map(m => m.from + ">" + m.to));
+  const alias = { "zh-CN": "zh", "zh-TW": "zt", "pt": "pt" };
+  const ready = code => {
+    const c = alias[code] || code;
+    return have.has("en>" + c) || have.has(c + ">en");
+  };
+  for (const o of sel.options) {
+    if (ready(o.value)) o.textContent += " · đã tải";
+  }
+  const mb = Math.round((mt.disk_bytes || 0) / (1024 * 1024));
+  if (!mt.runtime_ready) {
+    info.textContent = "Lần dịch đầu tiên sẽ tự tải engine dịch offline "
+      + "(~60 MB) + model ngôn ngữ (~80 MB). Sau đó chạy không cần mạng.";
+  } else if (have.size) {
+    info.textContent = "Engine offline đã sẵn sàng · model: "
+      + (mt.pairs || []).join(", ") + " (" + mb + " MB). Ngôn ngữ chưa có "
+      + "model sẽ được tải khi dùng lần đầu (~80 MB).";
+  } else {
+    info.textContent = "Engine offline đã cài, chưa có model ngôn ngữ nào — "
+      + "sẽ tự tải (~80 MB) khi dịch lần đầu.";
+  }
+  if (mt.supported && mt.supported.length) {
+    for (const o of sel.options) {
+      const c = alias[o.value] || o.value;
+      if (!mt.supported.includes(c) && o.value !== "en") {
+        o.disabled = true;
+        o.textContent += " · chưa có model";
+      }
+    }
+  }
+}).catch(() => {});
+
 syncOpt($("#analyzeAssets"), $("#analyzeOpt"));
+syncOpt($("#translateOn"), $("#translateOpt"));
+const translateCb = $("#translateOn"), translateSel = $("#translateLang");
+translateCb.addEventListener("change", () => translateSel.disabled = !translateCb.checked);
+// select nằm trong <label> — chặn bubble để chọn ngôn ngữ không tự bật/tắt toggle
+translateSel.addEventListener("click", e => e.stopPropagation());
+$("#translateData").addEventListener("click", e => e.stopPropagation());
+$("#translateCode").addEventListener("click", e => e.stopPropagation());
 
 let pollTimer = null;
 let jobMode = "patch";  // "patch": chặn quảng cáo; "analyze": chỉ phân tích tài nguyên
@@ -751,11 +854,13 @@ async function upload(file) {
   }
   const blockAds = $("#blockAds").checked;
   const wantAnalyze = $("#analyzeAssets").checked;
-  if (!blockAds && !wantAnalyze) { alert("Hãy tích ít nhất một tuỳ chọn."); return; }
-  jobMode = blockAds ? "patch" : "analyze";
+  const lang = translateCb.checked ? translateSel.value : "";
+  if (!blockAds && !wantAnalyze && !lang) { alert("Hãy bật ít nhất một tuỳ chọn."); return; }
+  jobMode = (blockAds || lang) ? "patch" : "analyze";
   drop.classList.add("hidden");
   $("#blockAdsOpt").classList.add("hidden");
   $("#analyzeOpt").classList.add("hidden");
+  $("#translateOpt").classList.add("hidden");
   $("#reportCard").classList.add("hidden");
   $("#assetCard").classList.add("hidden");
   $("#techCard").classList.add("hidden");
@@ -780,6 +885,9 @@ async function upload(file) {
         "X-Filename": encodeURIComponent(file.name),
         "X-Block-Ads": blockAds ? "1" : "0",
         "X-Analyze": wantAnalyze ? "1" : "0",
+        "X-Translate-Lang": lang,
+        "X-Translate-Data": $("#translateData").checked ? "1" : "0",
+        "X-Translate-Code": $("#translateCode").checked ? "1" : "0",
         "Content-Type": "application/octet-stream",
       },
     });
@@ -793,7 +901,7 @@ async function upload(file) {
 
 function resetSteps() {
   $("#steps").innerHTML = STEP_ORDER.map(s => {
-    const labels = { decode: "Giải nén", assets: "Tài nguyên", analyze: "Quét ads", patch: "Vô hiệu hóa", reward: "Fake quà", offline: "Ép offline", build: "Build", sign: "Ký APK", done: "Hoàn tất" };
+    const labels = { decode: "Giải nén", translate: "Dịch ngôn ngữ", assets: "Tài nguyên", analyze: "Quét ads", patch: "Vô hiệu hóa", reward: "Fake quà", offline: "Ép offline", build: "Build", sign: "Ký APK", done: "Hoàn tất" };
     return '<div class="step" id="step-' + s + '">' + labels[s] + "</div>";
   }).join("");
   $("#bar").style.width = "0";
@@ -910,15 +1018,105 @@ function renderReport(job) {
     $("#offlineBox").classList.add("hidden");
   }
 
+  const tr = r.translate || {};
+  const ftr = r.flutter_translate || {};
+  const trCode = r.translate_code || {};
+  if (tr.enabled || ftr.embedded || trCode.translated) {
+    $("#translateBox").classList.remove("hidden");
+    let html = "";
+    if (tr.enabled) {
+      html += "Đã dịch <b>" + (tr.translated || 0) + "/" + (tr.strings || 0)
+        + "</b> chuỗi <code>res/values</code> sang <b>" + esc(tr.lang_name || tr.lang || "")
+        + "</b> trong " + (tr.files || 0) + " file"
+        + (tr.cache_hit ? " · " + tr.cache_hit + " chuỗi dùng cache" : "")
+        + (tr.skipped ? " · " + tr.skipped + " chuỗi bỏ qua" : "")
+        + (tr.failed ? " · <span style=\"color:var(--warn)\">" + tr.failed
+          + " chuỗi giữ nguyên</span>" : "") + ".<br>";
+    }
+    if (ftr.embedded) {
+      html += "Flutter hook: nhúng <b>" + (ftr.translated || 0)
+        + "</b> chuỗi UI + <code>libflutter_hook.so</code> ("
+        + esc((ftr.abis || []).join(", ") || "?") + ").<br>";
+    }
+    if (trCode.translated) {
+      html += "Smali hardcode: dịch <b>" + trCode.translated + "</b> chuỗi.<br>";
+    }
+    const at = r.apptech || {};
+    const dataStore = (at.stores || []).find(s => s.kind === "asset_data");
+    if (dataStore && !(r.deep_translate && (r.deep_translate.stores || []).some(s => s.kind === "asset_data"))) {
+      html += "<span style=\"color:var(--warn)\">⚠ App còn <b>"
+        + (dataStore.strings || 0).toLocaleString()
+        + "</b> chuỗi nội dung JSON chưa dịch — bật «Dịch cả dữ liệu nội dung» rồi chạy lại nếu muốn dịch bài quiz/bài học.</span>";
+    }
+    $("#translateSummary").innerHTML = html;
+  } else {
+    $("#translateBox").classList.add("hidden");
+  }
+
   const comps = r.components_removed || [];
   $("#compSummary").textContent = "Danh sách " + comps.length + " component đã xóa khỏi AndroidManifest";
   $("#compList").innerHTML = comps.map(c => '<span class="tag removed">✂ ' + c + "</span>").join(" ");
 
+  renderAppTech(r.apptech, r.deep_translate);
   renderTech(r.tech, job.id);
   renderApi(r.api);
   renderAssets(r.assets, job.id);
 
   $("#log").textContent = (job.log || []).join("\n");
+}
+
+// ============ Kho text: app dùng công nghệ gì, text nằm ở đâu ============
+const STORE_LABEL = {
+  android_res: "res/values (Android resources)",
+  hermes: "Hermes bytecode (React Native)",
+  js_bundle: "JS bundle (React Native không Hermes)",
+  asset_i18n: "catalog i18n trong assets",
+  asset_data: "dữ liệu app trong assets (JSON/CSV)",
+  web_assets: "web assets (WebView)",
+  flutter_aot: "Dart AOT snapshot (Flutter)",
+  unity_assets: "Unity asset bundle",
+  unity_il2cpp: "Unity IL2CPP metadata",
+  dotnet_resources: ".NET assemblies",
+  unreal_locres: "Unreal locres/pak",
+};
+const STORE_MARK = { ready: "✅", partial: "🟡", unsupported: "❌" };
+
+function renderAppTech(at, deep) {
+  const box = $("#apptechBox");
+  if (!at || !at.stores) { box.classList.add("hidden"); return; }
+  box.classList.remove("hidden");
+  const plats = (at.platforms || []).map(p =>
+    '<span class="tag">' + esc((p.icon || "") + " " + p.name) + "</span>").join(" ");
+  $("#apptechSummary").innerHTML =
+    plats + (at.hybrid ? ' <span class="tag warn">app lai — nhiều nền tảng</span>' : "")
+    + '<br>Tổng chuỗi dịch được: <b>' + (at.translatable || 0).toLocaleString() + "</b>";
+  $("#apptechStores").innerHTML = at.stores.map(st => {
+    const n = typeof st.strings === "number"
+      ? st.strings.toLocaleString() + " chuỗi" : "chưa đếm";
+    const d = st.detail ? '<br><small style="color:var(--muted)">bảng chuỗi '
+      + st.detail.total.toLocaleString() + " (String " + st.detail.string_kind.toLocaleString()
+      + " · Identifier " + st.detail.identifier_kind.toLocaleString() + "), "
+      + st.detail.functions.toLocaleString() + " function</small>" : "";
+    const why = st.why ? '<br><small style="color:var(--muted)">→ ' + esc(st.why) + "</small>" : "";
+    return '<div style="margin:6px 0;padding:8px 10px;border-radius:8px;background:rgba(255,255,255,.04)">'
+      + STORE_MARK[st.status] + " <b>" + esc(STORE_LABEL[st.kind] || st.kind) + "</b> — " + n
+      + '<br><small style="color:var(--muted)">' + esc(st.where)
+      + (st.engine ? " · " + esc(st.engine) : "") + "</small>" + d + why + "</div>";
+  }).join("");
+
+  const ds = $("#deepSummary");
+  if (!deep || !deep.stores || !deep.stores.length) { ds.innerHTML = ""; return; }
+  ds.innerHTML = deep.stores.map(st => {
+    const head = "<b>" + esc(STORE_LABEL[st.kind] || st.kind) + "</b>"
+      + (st.where ? " <small>" + esc(st.where) + "</small>" : "")
+      + ": " + (st.translated || 0) + "/" + (st.candidates || 0) + " chuỗi"
+      + (st.error ? ' <span style="color:var(--err)">— bỏ qua: ' + esc(st.error) + "</span>" : "");
+    const ex = (st.samples || []).slice(0, 5).map(s =>
+      '<div style="margin:3px 0 3px 12px;font-size:12px;color:var(--muted)">'
+      + esc(s.from.slice(0, 70)) + " → <span style=\"color:var(--fg)\">"
+      + esc(s.to.slice(0, 70)) + "</span></div>").join("");
+    return "<div style=\"margin:6px 0\">" + head + ex + "</div>";
+  }).join("");
 }
 
 // ================= Công nghệ của ứng dụng =================
@@ -1746,6 +1944,7 @@ function backToStart() {
   drop.classList.remove("hidden");
   $("#blockAdsOpt").classList.remove("hidden");
   $("#analyzeOpt").classList.remove("hidden");
+  $("#translateOpt").classList.remove("hidden");
   fileInput.value = "";
 }
 $("#again").addEventListener("click", backToStart);

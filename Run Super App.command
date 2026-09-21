@@ -16,14 +16,44 @@ SERVICES=(
 )
 declare -A SERVICE_PIDS
 
+# NetFence cần đọc bảng ARP — trên macOS 15+/27, Homebrew Python thường bị
+# Local Network Privacy chặn (`arp -an` rỗng / MAC giả 02:00:00:00:00:00).
+# Luôn dùng Python hệ thống (Apple-signed) và KHÔNG tái sử dụng process cũ.
+PYTHON_NETFENCE="/usr/bin/python3"
+PYTHON_DEFAULT="${PYTHON:-python3}"
+
+kill_port() {
+  local port="$1"
+  local pids
+  pids=$(/usr/sbin/lsof -t -nP -iTCP:"$port" -sTCP:LISTEN 2>/dev/null || true)
+  if [[ -n "$pids" ]]; then
+    echo "→ Dang tat process cu tren cong $port (pid: $pids)..."
+    kill $pids 2>/dev/null || true
+    for _ in {1..20}; do
+      /usr/sbin/lsof -nP -iTCP:"$port" -sTCP:LISTEN >/dev/null 2>&1 || break
+      sleep 0.1
+    done
+    pids=$(/usr/sbin/lsof -t -nP -iTCP:"$port" -sTCP:LISTEN 2>/dev/null || true)
+    if [[ -n "$pids" ]]; then
+      kill -9 $pids 2>/dev/null || true
+      sleep 0.2
+    fi
+  fi
+}
+
 start_bg() {  # $1=port  $2=nhãn  $3=thư mục con
   local port="$1" label="$2" sub="$3"
-  if /usr/sbin/lsof -nP -iTCP:$port -sTCP:LISTEN >/dev/null 2>&1; then
+  local py="$PYTHON_DEFAULT"
+  if [[ "$sub" == "netfence" ]]; then
+    py="$PYTHON_NETFENCE"
+    # Process cũ (thường do Homebrew Python) có thể vẫn listen nhưng không đọc được ARP.
+    kill_port "$port"
+  elif /usr/sbin/lsof -nP -iTCP:$port -sTCP:LISTEN >/dev/null 2>&1; then
     echo "✓ $label da chay san tren cong $port."
     return 1
   fi
-  echo "→ Dang bat $label server (cong $port)..."
-  ( cd "$DIR/$sub" && exec python3 server.py ) >/tmp/superapp_${sub}.log 2>&1 &
+  echo "→ Dang bat $label server (cong $port) bang $py..."
+  ( cd "$DIR/$sub" && exec "$py" server.py ) >/tmp/superapp_${sub}.log 2>&1 &
   SERVICE_PIDS[$sub]=$!
   return 0
 }

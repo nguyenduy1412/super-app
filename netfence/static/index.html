@@ -102,6 +102,27 @@
   .events-list{max-height:140px;overflow-y:auto;margin-top:8px;display:flex;flex-direction:column;gap:5px;padding-right:4px}
   .event-item{display:flex;gap:8px;align-items:center;padding:5px 8px;border-radius:6px;background:rgba(255,255,255,.03);font-size:12px}
   .event-time{color:var(--muted);font-family:ui-monospace,Menlo,monospace;font-size:11px;min-width:55px}
+  /* Monitor: giám sát traffic (DNS + TLS SNI) theo thiết bị */
+  #monitor-panel{margin-top:14px;background:var(--panel);border:1px solid var(--line);border-radius:10px;padding:12px 14px}
+  .mon-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(320px,1fr));gap:12px;margin-top:10px}
+  .mon-card{background:rgba(255,255,255,.02);border:1px solid var(--line);border-radius:10px;padding:10px 12px;display:flex;flex-direction:column;gap:8px;min-width:0}
+  .mon-head{display:flex;align-items:center;justify-content:space-between;gap:8px}
+  .dom-list{max-height:260px;overflow-y:auto;display:flex;flex-direction:column;gap:4px}
+  .dom-row{display:flex;gap:8px;align-items:center;padding:4px 6px;border-radius:6px;background:rgba(255,255,255,.03);font-size:12.5px;min-width:0}
+  .dom-row b{overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+  .src-badge{font-size:10px;font-weight:700;padding:1px 6px;border-radius:99px;background:rgba(56,189,248,.15);color:#38bdf8;flex-shrink:0}
+  .src-badge.sni{background:rgba(52,211,153,.15);color:#34d399}
+  /* Panel thu gọn + tabs kiểu VSCode */
+  .panel-header{display:flex;align-items:center;gap:8px;cursor:pointer;user-select:none}
+  .chev{display:inline-block;transition:transform .15s;color:var(--muted);font-size:11px}
+  .chev.open{transform:rotate(90deg)}
+  .mon-tabs{display:flex;gap:4px;overflow-x:auto;padding-bottom:8px;margin-bottom:8px;border-bottom:1px solid var(--line)}
+  .mon-tab{display:flex;align-items:center;gap:7px;padding:5px 10px;border-radius:8px 8px 0 0;background:rgba(255,255,255,.03);cursor:pointer;font-size:12.5px;white-space:nowrap;max-width:240px;color:var(--muted);flex-shrink:0}
+  .mon-tab.active{background:rgba(56,189,248,.10);color:#7dd3fc;box-shadow:inset 0 -2px 0 #38bdf8}
+  .mon-tab-label{overflow:hidden;text-overflow:ellipsis;min-width:0}
+  .mon-tab-close{opacity:.45;cursor:pointer;border-radius:4px;padding:0 3px;flex-shrink:0}
+  .mon-tab-close:hover{opacity:1;background:rgba(239,68,68,.25)}
+  .freeze-hint{display:none;font-size:11.5px;color:#fbbf24;background:rgba(251,191,36,.08);border:1px solid rgba(251,191,36,.25);border-radius:6px;padding:3px 8px;margin-bottom:6px}
 </style>
 </head>
 <body>
@@ -144,6 +165,7 @@
         <span class="pill" id="defense-pill" title="Hệ thống tự động khóa tĩnh ARP Gateway để miễn nhiễm mọi đòn tấn công"><span class="dot on" style="background:#38bdf8;box-shadow:0 0 8px #38bdf8"></span><span id="defense-text">Tự vệ: Đang bật (Khóa tĩnh Gateway)</span></span>
     <span class="pill"><span class="dot" id="eng-dot"></span><span id="eng-text">Engine: —</span></span>
     <span class="pill" id="sniff-pill"><span class="dot" id="sniff-dot"></span><span id="sniff-text">Bắt tên: tắt</span></span>
+    <span class="pill" id="auto-mon-pill" style="cursor:pointer" onclick="toggleAutoMonitor()" title="Tự động bắt traffic (DNS/SNI) các thiết bị chưa xác định để đoán tên; ngừng khi dò được tên"><span class="dot off" id="auto-mon-dot"></span><span id="auto-mon-text">Tự dò tên: TẮT</span></span>
     <span class="pill" id="blk-pill" style="display:none"></span>
     <span style="flex:1"></span>
     <button class="mini" id="btn-sound" onclick="toggleSound()" title="Bật/tắt âm thanh cảnh báo">🔊 Âm thanh</button>
@@ -191,12 +213,31 @@
     <thead><tr><th>Thiết bị</th><th>Loại / OS</th><th>IP</th><th>MAC</th><th>Nhà sản xuất</th><th>Vai trò</th><th style="text-align:right">Hành động</th></tr></thead>
     <tbody id="rows"><tr><td colspan="7" class="empty">Bấm <b>Quét mạng</b> để bắt đầu.</td></tr></tbody>
   </table>
+
+  <!-- Monitor Panel: giám sát traffic (DNS + TLS SNI) theo thiết bị -->
+  <div id="monitor-panel" style="display:none">
+    <div class="panel-header" onclick="toggleMonPanel()" title="Bấm để thu gọn/mở — giám sát luôn chạy ngầm">
+      <span class="chev" id="mon-chev">▶</span>
+      <div style="font-weight:700">👁 Giám sát traffic
+        <span style="font-weight:400;color:var(--muted);font-size:12px">(DNS + TLS SNI — chạy ngầm, chỉ thấy tên miền, không thấy nội dung HTTPS)</span>
+      </div>
+      <span class="pill" id="mon-count-pill" style="margin-left:auto">0 thiết bị</span>
+    </div>
+    <div id="mon-body" style="display:none">
+      <div class="mon-tabs" id="mon-tabs"></div>
+      <div id="mon-content"></div>
+    </div>
+  </div>
 </div>
 
 <div class="toast" id="toast"></div>
 
 <script>
 let scanning = false, lastDevices = [], lastBlocked = [], lastSummary = null;
+let lastMonitors = [], lastDomains = {};
+let autoMonitorOn = false;
+let activeMonitorIp = null, renderedForIp = null;
+let monPanelOpen = localStorage.getItem('nf_mon_open') === '1';  // mặc định thu gọn
 let currentCategory = 'all';
 let lastSeenEventId = 0;
 let soundEnabled = localStorage.getItem('netfence_sound') !== '0';
@@ -462,6 +503,152 @@ async function api(path, opts) {
 }
 function esc(s) { return (s || '').replace(/[&<>"]/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c])); }
 
+function domRowsHtml(list) {
+  if (!list.length) return '<div style="color:var(--muted);font-size:12px;padding:6px 0">Chưa bắt được truy cập nào — chờ thiết bị truy cập web/app…</div>';
+  return list.map(e => {
+    const t = new Date((e.ts || 0) * 1000).toLocaleTimeString('vi-VN');
+    const src = e.src === 'sni'
+      ? '<span class="src-badge sni" title="Tra từ TLS ClientHello (HTTPS)">SNI</span>'
+      : '<span class="src-badge" title="Tra từ truy vấn DNS">DNS</span>';
+    return `<div class="dom-row"><span class="event-time">${t}</span>${src}<b>${esc(e.d)}</b></div>`;
+  }).join('');
+}
+
+function guessHtml(g) {
+  if (!g) return '<span style="color:var(--muted)">🧠 Chưa đủ dữ liệu để đoán — chờ thêm traffic…</span>';
+  return `🧠 Đoán từ traffic: <b>${esc(g.icon || '')} ${esc(g.type)}</b>${g.os && g.os !== '—' ? ' (' + esc(g.os) + ')' : ''} · tin cậy ${esc(g.confidence)}${g.evidence && g.evidence.length ? ' — vd: ' + esc(g.evidence.slice(0, 2).join(', ')) : ''}`;
+}
+
+function renderMonitors(monitors, domains) {
+  lastMonitors = monitors || [];
+  lastDomains = domains || {};
+  const panel = document.getElementById('monitor-panel');
+  if (!panel) return;
+  const countPill = document.getElementById('mon-count-pill');
+  if (countPill) countPill.textContent = `${lastMonitors.length} thiết bị`;
+  if (!lastMonitors.length) { panel.style.display = 'none'; activeMonitorIp = null; return; }
+  panel.style.display = '';
+  if (monPanelOpen) {
+    const body = document.getElementById('mon-body');
+    const chev = document.getElementById('mon-chev');
+    if (body) body.style.display = '';
+    if (chev) chev.classList.add('open');
+  }
+  if (!monPanelOpen) return;   // chạy ngầm: không render tabs/content
+
+  if (!activeMonitorIp || !lastMonitors.some(m => m.ip === activeMonitorIp)) {
+    activeMonitorIp = lastMonitors[0].ip;
+    renderedForIp = null;
+  }
+  const tabBar = document.getElementById('mon-tabs');
+  const tabsHtml = lastMonitors.map(m => `
+    <div class="mon-tab ${m.ip === activeMonitorIp ? 'active' : ''}" onclick="selectMonitor('${m.ip}')" title="${esc(m.ip)}">
+      <span class="mon-tab-label">${esc(m.name || m.ip)}</span>
+      <span class="mon-tab-close" title="Dừng giám sát thiết bị này" onclick="event.stopPropagation(); stopMonitor('${m.ip}')">✕</span>
+    </div>`).join('');
+  if (tabBar && tabBar.innerHTML !== tabsHtml) {
+    tabBar.innerHTML = tabsHtml;
+  }
+
+  const m = lastMonitors.find(x => x.ip === activeMonitorIp);
+  let listEl = document.getElementById('mon-dom-list');
+  if (!listEl || renderedForIp !== activeMonitorIp) {
+    document.getElementById('mon-content').innerHTML = `
+      <div class="mon-card">
+        <div class="mon-head">
+          <div style="min-width:0"><b id="mon-head-name"></b>${m.name ? ` <span class="mac" id="mon-head-ip"></span>` : ''}</div>
+          <button class="mini" onclick="stopMonitor('${m.ip}')">⏹ Dừng</button>
+        </div>
+        <div id="mon-guess" style="font-size:12.5px;color:#67e8f9"></div>
+        <div id="mon-freeze-hint" class="freeze-hint">⏸ Bạn đang xem mục cũ — cuộn lên đầu danh sách để nhận request mới liên tục</div>
+        <div class="dom-list" id="mon-dom-list"></div>
+      </div>`;
+    renderedForIp = activeMonitorIp;
+    listEl = document.getElementById('mon-dom-list');
+  }
+  document.getElementById('mon-head-name').textContent = m.name || m.ip;
+  const ipEl = document.getElementById('mon-head-ip');
+  if (ipEl) ipEl.textContent = m.ip;
+  const guessStr = guessHtml(m.guess);
+  const guessEl = document.getElementById('mon-guess');
+  if (guessEl && guessEl.innerHTML !== guessStr) guessEl.innerHTML = guessStr;
+
+  // Giữ vị trí cuộn: chỉ cập nhật liên tục khi người dùng đang ở ĐẦU danh sách
+  const frozen = listEl.scrollTop > 0;
+  document.getElementById('mon-freeze-hint').style.display = frozen ? 'block' : 'none';
+  if (!frozen) {
+    const domHtml = domRowsHtml(lastDomains[m.ip] || []);
+    if (listEl.dataset.renderedHtml !== domHtml) {
+      listEl.innerHTML = domHtml;
+      listEl.dataset.renderedHtml = domHtml;
+    }
+  }
+}
+
+function toggleMonPanel() {
+  monPanelOpen = !monPanelOpen;
+  localStorage.setItem('nf_mon_open', monPanelOpen ? '1' : '0');
+  const body = document.getElementById('mon-body');
+  const chev = document.getElementById('mon-chev');
+  if (body) body.style.display = monPanelOpen ? '' : 'none';
+  if (chev) chev.classList.toggle('open', monPanelOpen);
+  if (monPanelOpen) renderMonitors(lastMonitors, lastDomains);
+}
+
+function selectMonitor(ip) {
+  if (activeMonitorIp === ip) return;
+  activeMonitorIp = ip;
+  renderedForIp = null;   // đổi tab -> dựng lại khung (reset scroll)
+  renderMonitors(lastMonitors, lastDomains);
+}
+
+async function monitorDevice(ip, mac, name) {
+  activeMonitorIp = ip;
+  renderedForIp = null;
+  if (!monPanelOpen) toggleMonPanel();
+  toast(`Đang bật giám sát ${name || ip} … (có thể cần nhập mật khẩu admin)`);
+  const r = await api('/api/monitor', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ ip, mac, name: name || '' })
+  });
+  toast(r.ok ? `👁 Đang giám sát ${name || ip} — danh sách tên miền sẽ hiện bên dưới` : ('Lỗi: ' + (r.error || '?')), r.ok ? 'ok' : 'err');
+  refreshStatus();
+}
+
+async function stopMonitor(ip) {
+  const r = await api('/api/monitor_stop', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ ip })
+  });
+  toast(r.ok ? 'Đã dừng giám sát' : ('Lỗi: ' + (r.error || '?')), r.ok ? 'ok' : 'err');
+  refreshStatus();
+}
+
+function renderAutoMonitor(on) {
+  if (on !== undefined) autoMonitorOn = !!on;
+  const dot = document.getElementById('auto-mon-dot');
+  const txt = document.getElementById('auto-mon-text');
+  if (dot) dot.className = 'dot ' + (autoMonitorOn ? 'on' : 'off');
+  if (txt) txt.textContent = 'Tự dò tên: ' + (autoMonitorOn ? 'BẬT' : 'TẮT');
+}
+
+async function toggleAutoMonitor() {
+  const r = await api('/api/auto_monitor', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ enabled: !autoMonitorOn })
+  });
+  if (r.ok) {
+    autoMonitorOn = !!r.enabled;
+    toast(autoMonitorOn ? '🧠 Đã bật tự dò tên thiết bị lạ qua traffic' : 'Đã tắt tự dò tên', 'ok');
+    renderAutoMonitor();
+  } else {
+    toast('Lỗi: ' + (r.error || '?'), 'err');
+  }
+}
+
 function renderInfo(info, engine) {
   const g = document.getElementById('info');
   const rows = [
@@ -580,14 +767,20 @@ function renderDevices(devices, blocked) {
     const msg = q
       ? `Không tìm thấy thiết bị khớp từ khoá "${esc(q)}"`
       : (currentCategory !== 'all' ? 'Không có thiết bị nào trong nhóm này.' : 'Không thấy thiết bị nào.');
-    body.innerHTML = `<tr><td colspan="7" class="empty">${msg}</td></tr>`;
+    const emptyHtml = `<tr><td colspan="7" class="empty">${msg}</td></tr>`;
+    if (body.dataset.renderedHtml !== emptyHtml) {
+      body.innerHTML = emptyHtml;
+      body.dataset.renderedHtml = emptyHtml;
+    }
     return;
   }
 
-  body.innerHTML = filtered.map(d => {
+  const rowsHtml = filtered.map(d => {
     const blkInfo = blkMap.get(d.ip);
     const isBlocked = !!blkInfo || d.blocked;
     const isOffline = blkInfo && blkInfo.status === 'offline';
+    const monInfo = (lastMonitors || []).find(m => m.ip === d.ip);
+    const isMonitored = !!monInfo;
 
     const g = getDeviceGroup(d);
     let grpBadge = '';
@@ -606,12 +799,25 @@ function renderDevices(devices, blocked) {
         roleTag += ' <span class="tag blk">⛔ Đang chặn</span>';
       }
     }
+    if (isMonitored) {
+      roleTag += ' <span class="tag" style="background:rgba(56,189,248,.12);color:#38bdf8" title="MITM trong suốt: đang ghi lại tên miền mà thiết bị truy cập (DNS + SNI)">👁 Đang giám sát</span>';
+    }
+    if (monInfo && monInfo.guess) {
+      const ev = monInfo.guess.evidence && monInfo.guess.evidence.length ? ' — vd: ' + esc(monInfo.guess.evidence.join(', ')) : '';
+      roleTag += ` <span class="tag" style="background:rgba(103,232,249,.12);color:#67e8f9" title="Đoán từ traffic DNS/SNI${ev}">🧠 ${esc(monInfo.guess.type)}?</span>`;
+    }
 
     let action = '';
     if (d.role === 'device') {
-      action = isBlocked
-        ? `<button class="mini" onclick="unblock('${d.ip}')">Bỏ chặn</button>`
-        : `<button class="mini danger" onclick="block('${d.ip}','${esc(d.mac)}','${esc(d.name||'')}')">Chặn</button>`;
+      if (isBlocked) {
+        action = `<button class="mini" onclick="unblock('${d.ip}')">Bỏ chặn</button>`;
+      } else if (isMonitored) {
+        action = `<button class="mini danger" onclick="block('${d.ip}','${esc(d.mac)}','${esc(d.name||'')}')">Chặn</button> `
+               + `<button class="mini warn" onclick="stopMonitor('${d.ip}')">⏹ Dừng xem</button>`;
+      } else {
+        action = `<button class="mini danger" onclick="block('${d.ip}','${esc(d.mac)}','${esc(d.name||'')}')">Chặn</button> `
+               + `<button class="mini" onclick="monitorDevice('${d.ip}','${esc(d.mac)}','${esc(d.name||'')}')">👁 Xem</button>`;
+      }
     } else {
       action = '<span style="color:var(--muted);font-size:12px">—</span>';
     }
@@ -621,17 +827,33 @@ function renderDevices(devices, blocked) {
     const conf = d.confidence && d.confidence !== '—' && d.confidence !== 'cao'
       ? `<span class="conf" title="Độ tin cậy nhận diện">~${esc(d.confidence)}</span>` : '';
 
+    // Khi có đoán từ traffic: cột loại hiển thị kết quả đoán thay cho nhận diện ARP/TTL
+    let typeCell;
+    if (monInfo && monInfo.guess) {
+      const g = monInfo.guess;
+      const gOs = g.os && g.os !== '—' ? `<span class="os">${esc(g.os)}</span>` : '';
+      typeCell = `<span class="dtype" style="color:#67e8f9" title="Đoán từ traffic DNS/SNI (nhận diện gốc: ${esc(d.type || '')})">${esc(g.icon || '🧠')} ${esc(g.type)}</span> ${gOs} `
+               + `<span class="conf" title="Bằng chứng: ${(g.evidence || []).join(', ')}">đoán ${esc(g.confidence)}</span>`;
+    } else {
+      typeCell = `<span class="dtype">${esc(d.type || 'Không rõ')}</span> ${osLine} ${conf}`;
+    }
+
     const rowClass = isBlocked ? (isOffline ? 'row-offline' : 'row-blocked') : '';
 
     return `<tr class="${rowClass}">
       <td class="dev-name"><span class="dev-ic">${d.icon || '❓'}</span> <b>${dispName}</b> ${grpBadge}</td>
-      <td><span class="dtype">${esc(d.type || 'Không rõ')}</span> ${osLine} ${conf}</td>
+      <td>${typeCell}</td>
       <td><b>${esc(d.ip)}</b></td>
       <td class="mac">${esc(d.mac)}</td>
       <td>${esc(d.vendor)}</td>
       <td>${roleTag}</td>
       <td style="text-align:right">${action}</td></tr>`;
   }).join('');
+
+  if (body.dataset.renderedHtml !== rowsHtml) {
+    body.innerHTML = rowsHtml;
+    body.dataset.renderedHtml = rowsHtml;
+  }
 }
 
 async function doScan() {
@@ -712,6 +934,8 @@ async function refreshStatus() {
     renderDefense(s.defense);
     handleThreats(s.threats);
     handleEvents(s.events);
+    renderAutoMonitor(s.auto_monitor);
+    renderMonitors(s.monitors, s.domains);
     renderDevices(lastDevices, s.blocked);
   } catch (e) {}
 }

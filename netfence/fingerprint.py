@@ -141,6 +141,68 @@ def netbios_name(ip: str, timeout: float = 1.0) -> str:
         return ""
 
 
+SSDP_ADDR = ("239.255.255.250", 1900)
+
+
+def ssdp_discover_all(timeout: float = 1.2) -> dict[str, str]:
+    """Quét UPnP/SSDP 1 lần cho cả mạng (bắn 1 gói multicast, nghe hết phản hồi -
+    đỡ phải mỗi thiết bị tự bắn 1 lần). Trả {ip: friendlyName} - chỉ có với các
+    thiết bị đang bật chia sẻ DLNA/media/UPnP (không phải máy nào cũng có)."""
+    msg = (
+        "M-SEARCH * HTTP/1.1\r\n"
+        "HOST: 239.255.255.250:1900\r\n"
+        'MAN: "ssdp:discover"\r\n'
+        "MX: 1\r\n"
+        "ST: ssdp:all\r\n\r\n"
+    ).encode()
+    out: dict[str, str] = {}
+    s = socket.socket(socket.AF_INET, socket.SOCK_DGRAM, socket.IPPROTO_UDP)
+    s.settimeout(timeout)
+    try:
+        s.sendto(msg, SSDP_ADDR)
+        end = time.time() + timeout
+        while time.time() < end:
+            try:
+                data, addr = s.recvfrom(4096)
+            except socket.timeout:
+                break
+            ip = addr[0]
+            if ip in out:
+                continue
+            loc = None
+            for line in data.decode("utf-8", "ignore").split("\r\n"):
+                if line.lower().startswith("location:"):
+                    loc = line.split(":", 1)[1].strip()
+                    break
+            if loc:
+                name = _ssdp_fetch_friendly_name(loc, ip)
+                if name:
+                    out[ip] = name
+    except OSError:
+        pass
+    finally:
+        s.close()
+    return out
+
+
+def _ssdp_fetch_friendly_name(location: str, expect_host: str, timeout: float = 1.0) -> str:
+    """Tải XML mô tả thiết bị UPnP, lấy <friendlyName>. Chỉ chấp nhận URL http://
+    trỏ đúng về IP đã hỏi (chặn thiết bị trỏ URL sang chỗ khác - SSRF)."""
+    try:
+        from urllib.parse import urlparse
+        import urllib.request
+
+        parsed = urlparse(location)
+        if parsed.scheme != "http" or parsed.hostname != expect_host:
+            return ""
+        with urllib.request.urlopen(location, timeout=timeout) as r:  # noqa: S310
+            body = r.read(8192).decode("utf-8", "ignore")
+        m = re.search(r"<friendlyName>(.*?)</friendlyName>", body, re.I | re.S)
+        return m.group(1).strip() if m else ""
+    except Exception:
+        return ""
+
+
 def reverse_dns(ip: str, timeout: float = 0.5) -> str:
     old = socket.getdefaulttimeout()
     socket.setdefaulttimeout(timeout)
@@ -233,6 +295,56 @@ _VENDOR_RULES = [
 ]
 
 
+# Domain HẠ TẦNG (push/update/connectivity) -> hãng/OS. Chỉ dùng domain hạ tầng,
+# KHÔNG dùng website thông thường (tránh người dùng Mac vô tình vào samsung.com
+# bị đoán nhầm thành điện thoại Samsung). Thứ tự = độ ưu tiên (cụ thể trước).
+_DOMAIN_RULES = [
+    (("pushmessage.samsung.com", "regi.samsung.com", "samsungotn.net", "samsungcloud.com"),
+     "Samsung", "Android", "📱", "cao"),
+    (("push.connect.xiaomi.com", "track.xiaomi.com", "sdk.xiaomi.com"),
+     "Xiaomi / POCO / Redmi", "Android", "📱", "cao"),
+    (("push.oppomobile.com", "push.heytapmobi.com", "coloros.com"),
+     "OPPO / Realme", "Android", "📱", "cao"),
+    (("push.vivo.com", "inf.vivoglobal.com"),
+     "vivo", "Android", "📱", "cao"),
+    (("push.hicloud.com", "push.dbankcloud.com"),
+     "Huawei / Honor", "HarmonyOS/Android", "📱", "cao"),
+    (("mesu.apple.com",), "iPhone / iPad", "iOS", "📱", "cao"),
+    (("swscan.apple.com", "swcdn.apple.com"), "Mac", "macOS", "💻", "cao"),
+    (("msftconnecttest.com", "windowsupdate.com", "download.windowsupdate.com"),
+     "Windows PC", "Windows", "🪟", "cao"),
+    (("tuyaus.com", "tuyaeu.com", "a1.tuya", "smartlif"), "IoT Tuya / Smart Life", "—", "🔌", "cao"),
+    (("tplinkcloud.com",), "TP-Link (IoT/Router)", "—", "🛜", "cao"),
+    (("ewelink",), "IoT eWeLink / Sonoff", "—", "🔌", "cao"),
+    (("smartthings.com",), "Samsung SmartThings (IoT)", "—", "🏠", "cao"),
+    (("hik-connect.com", "hikvision"), "Camera Hikvision", "—", "📷", "cao"),
+    (("push.apple.com", "gateway.icloud.com", "captive.apple.com", "icloud.com", "mzstatic.com"),
+     "Thiết bị Apple (iPhone/iPad/Mac)", "iOS/macOS", "🍎", "vừa"),
+    (("mtalk.google.com", "android.googleapis.com", "connectivitycheck.gstatic.com",
+      "play.googleapis.com", "device-provisioning.googleapis.com"),
+     "Android / Chrome", "Android?", "🤖", "vừa"),
+    (("login.live.com", "login.microsoftonline.com"),
+     "Thiết bị dùng Microsoft Account", "—", "🪟", "thấp"),
+]
+
+
+def guess_from_domains(domains: list[str]) -> dict | None:
+    """Đoán loại/hãng thiết bị từ các tên miền nó truy cập (traffic DNS/SNI đã bắt).
+
+    Chỉ khớp domain hạ tầng (push/update/connectivity) — không khớp website thường.
+    Trả {"type","os","icon","confidence","evidence"} hoặc None nếu không có tín hiệu."""
+    if not domains:
+        return None
+    uniq = list(dict.fromkeys(
+        d.lower().rstrip(".") for d in domains if d
+    ))
+    for patterns, typ, os_, icon, conf in _DOMAIN_RULES:
+        hits = [d for d in uniq if any(p in d for p in patterns)]
+        if hits:
+            return {"type": typ, "os": os_, "icon": icon,
+                    "confidence": conf, "evidence": hits[:3]}
+    return None
+
 def _first_name_hit(hay: str):
     for keys, typ, os_, icon in _NAME_RULES:
         if any(k in hay for k in keys):
@@ -297,34 +409,46 @@ def from_dhcp(hostname: str, vendor_class: str) -> dict | None:
 
 
 def is_generic_name(s: str) -> bool:
+    """True nếu tên chỉ là placeholder do hệ điều hành tự sinh (vd: "Android-3",
+    "iOS-Device") chứ không phải tên/model thật của thiết bị. Từ Android 10 và
+    iOS gần đây, các OS này CHỦ ĐỘNG phát tên giả kiểu này qua mDNS/DHCP để
+    chống bị theo dõi qua tên máy - không phản ánh model thật."""
     if not s:
         return True
     s = s.lower().strip()
-    return bool(re.match(r"^android(-\d+)?$", s) or s in ["localhost", "unknown", "broadcom", "device", "pc"])
+    if re.match(r"^(android|ios)(-[\w]+)?$", s):
+        return True
+    return s in ["localhost", "unknown", "broadcom", "device", "pc"]
 
 
-def best_name(mdns: str, netbios: str, rdns: str) -> str:
+def best_name(mdns: str, netbios: str, rdns: str, ssdp: str = "") -> str:
+    """So sánh tất cả nguồn tên bắt được (SSDP/UPnP, mDNS, rDNS, NetBIOS) và
+    chọn nguồn đầu tiên KHÔNG phải tên chung chung do OS tự sinh (vd: bỏ qua
+    "Android-3"/"iOS-Device" nếu có nguồn khác cho tên thật hơn). Nếu không
+    nguồn nào "sạch", đành trả tên chung chung còn hơn để trống."""
     m = mdns[:-6] if mdns.endswith(".local") else mdns
     r = rdns if (rdns and not rdns.replace(".", "").isdigit()) else ""
-    # Nếu mDNS chỉ là tên chung chung (Android, Android-2) mà rDNS có tên model thật (vd: poco-x6-pro-5g.lan) -> ưu tiên rDNS
-    if is_generic_name(m) and r and not is_generic_name(r):
-        return r
-    if m and not is_generic_name(m):
-        return m
-    if netbios and not is_generic_name(netbios):
-        return netbios
-    return r or m or netbios or ""
+    # Thứ tự ưu tiên khi có từ 2 nguồn "sạch" trở lên: SSDP (tên khai báo tay,
+    # đáng tin nhất) > mDNS > rDNS > NetBIOS.
+    candidates = [ssdp, m, r, netbios]
+    for c in candidates:
+        if c and not is_generic_name(c):
+            return c
+    for c in candidates:
+        if c:
+            return c
+    return ""
 
 
-def fingerprint(ip: str, mac: str, role: str, want_ttl: bool = True) -> dict:
+def fingerprint(ip: str, mac: str, role: str, want_ttl: bool = True, ssdp: str = "") -> dict:
     """Trả về dict enrich cho 1 thiết bị."""
     vendor = oui.lookup(mac)
     mdns = mdns_reverse(ip)
     nb = netbios_name(ip)
     rdns = reverse_dns(ip)
     ttl = ttl_probe(ip) if want_ttl else None
-    chosen_name = best_name(mdns, nb, rdns)
-    name_hay = f"{chosen_name} {mdns} {rdns}"
+    chosen_name = best_name(mdns, nb, rdns, ssdp)
+    name_hay = f"{chosen_name} {mdns} {rdns} {ssdp}"
     cls = classify(name_hay, nb, vendor, ttl, role)
     return {
         "vendor": vendor,
@@ -332,6 +456,7 @@ def fingerprint(ip: str, mac: str, role: str, want_ttl: bool = True) -> dict:
         "mdns": mdns,
         "netbios": nb,
         "rdns": rdns,
+        "ssdp": ssdp,
         "ttl": ttl,
         "type": cls["type"],
         "os": cls["os"],

@@ -5,3 +5,6 @@ __pycache__/
 *.apk
 adfree/jobs/
 jobs/
+adfree/translation_cache.json
+adfree/env_report/
+adfree/decoded_images/

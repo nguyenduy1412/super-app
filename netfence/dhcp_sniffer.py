@@ -4,6 +4,9 @@
 Chạy bằng ROOT. Dùng libpcap bắt:
   1. Gói DHCP (UDP 67/68): Trích xuất hostname và vendor_class ghi vào dhcp_names.json.
   2. Gói ARP: Phát hiện các đòn tấn công ARP Spoofing (kẻ mạo danh Gateway) ghi vào threats.json.
+  3. Gói DNS (UDP 53) & TLS ClientHello/SNI (TCP 443) của thiết bị đang GIÁM SÁT
+     (mode=monitor trong request.json): trích xuất tên miền truy cập ghi vào
+     domains.json (chế độ Monitor/Audit: MITM trong suốt, máy đích vẫn online).
 """
 from __future__ import annotations
 
@@ -20,6 +23,8 @@ import time
 PCAP_NETMASK_UNKNOWN = 0xFFFFFFFF
 SNAPLEN = 1600
 SAVE_EVERY = 2.0
+MAX_DOMAINS_PER_IP = 200
+DOMAIN_DEDUPE_SEC = 15.0   # cùng 1 (ip, domain, src) không ghi lại trong khoảng này
 
 
 class timeval(ctypes.Structure):
@@ -140,6 +145,120 @@ def _parse_arp(pkt: bytes):
         return None
 
 
+def _parse_dns_queries(pkt: bytes):
+    """Trả (src_ip, [qname, ...]) nếu là truy vấn DNS (UDP dst 53), ngược lại None."""
+    if len(pkt) < 14 + 20 + 8 + 12:
+        return None
+    if pkt[12:14] != b"\x08\x00":
+        return None
+    ip_start = 14
+    ihl = (pkt[ip_start] & 0x0F) * 4
+    if pkt[ip_start + 9] != 17:  # không phải UDP
+        return None
+    src_ip = socket.inet_ntoa(pkt[ip_start + 12: ip_start + 16])
+    udp = ip_start + ihl
+    if len(pkt) < udp + 8:
+        return None
+    dport = struct.unpack("!H", pkt[udp + 2:udp + 4])[0]
+    if dport != 53:
+        return None
+    dns = pkt[udp + 8:]
+    if len(dns) < 12:
+        return None
+    qdcount = struct.unpack("!H", dns[4:6])[0]
+    if qdcount == 0 or qdcount > 8:
+        return None
+    names: list[str] = []
+    off = 12
+    for _ in range(qdcount):
+        labels: list[str] = []
+        guard = 0
+        while off < len(dns) and guard < 64:
+            guard += 1
+            ln = dns[off]
+            if ln == 0:
+                off += 1
+                break
+            if ln & 0xC0:  # tên nén trong câu hỏi: hiếm/bất thường -> dừng query này
+                return src_ip, names
+            if off + 1 + ln > len(dns):
+                return src_ip, names
+            labels.append(dns[off + 1: off + 1 + ln].decode("ascii", "ignore"))
+            off += 1 + ln
+        if off + 4 > len(dns):
+            break
+        off += 4  # QTYPE + QCLASS
+        if labels:
+            name = ".".join(labels).lower()
+            # Bỏ qua truy vấn ngược (reverse DNS)
+            if len(labels) >= 3 and ".".join(labels[-2:]) in ("in-addr.arpa", "ip6.arpa"):
+                continue
+            names.append(name)
+    return src_ip, names
+
+
+def _parse_tls_sni(pkt: bytes):
+    """Trả (src_ip, server_name) từ TLS ClientHello (TCP 443), ngược lại None.
+
+    Chỉ xử lý ClientHello nằm trọn trong 1 segment TCP (trường hợp phổ biến);
+    gói bị phân mảnh sẽ bỏ qua (best-effort).
+    """
+    if len(pkt) < 14 + 20:
+        return None
+    if pkt[12:14] != b"\x08\x00":
+        return None
+    ip_start = 14
+    ihl = (pkt[ip_start] & 0x0F) * 4
+    if pkt[ip_start + 9] != 6:  # không phải TCP
+        return None
+    src_ip = socket.inet_ntoa(pkt[ip_start + 12: ip_start + 16])
+    tcp = ip_start + ihl
+    if len(pkt) < tcp + 20:
+        return None
+    dport = struct.unpack("!H", pkt[tcp + 2:tcp + 4])[0]
+    if dport != 443:
+        return None
+    data_off = (pkt[tcp + 12] >> 4) * 4
+    payload = pkt[tcp + data_off:]
+    if len(payload) < 6 or payload[0] != 0x16:  # TLS record: handshake
+        return None
+    hs = payload[5:]
+    if len(hs) < 43 or hs[0] != 0x01:  # ClientHello
+        return None
+    p = 1 + 3 + 2 + 32  # type(1) + len(3) + version(2) + random(32)
+    sid_len = hs[p]
+    p += 1 + sid_len
+    if len(hs) < p + 2:
+        return None
+    cs_len = struct.unpack("!H", hs[p:p + 2])[0]
+    p += 2 + cs_len
+    if len(hs) < p + 1:
+        return None
+    comp_len = hs[p]
+    p += 1 + comp_len
+    if len(hs) < p + 2:
+        return None
+    ext_len = struct.unpack("!H", hs[p:p + 2])[0]
+    p += 2
+    end = min(p + ext_len, len(hs))
+    while p + 4 <= end:
+        etype, elen = struct.unpack("!HH", hs[p:p + 4])
+        p += 4
+        if etype == 0:  # server_name extension
+            data = hs[p:p + elen]
+            # server_name_list: list_len(2) + name_type(1)=0 + name_len(2) + hostname
+            if len(data) >= 5 and data[2] == 0:
+                name_len = struct.unpack("!H", data[3:5])[0]
+                try:
+                    sni = data[5:5 + name_len].decode("ascii", "ignore").lower().rstrip(".")
+                except Exception:
+                    return None
+                return (src_ip, sni) if sni else None
+            return None
+        p += elen
+    return None
+
+
 class Sniffer:
     def __init__(self, state_dir: str, iface: str):
         self.state_dir = state_dir
@@ -147,10 +266,38 @@ class Sniffer:
         self.out = os.path.join(state_dir, "dhcp_names.json")
         self.status = os.path.join(state_dir, "sniffer_status.json")
         self.threats_path = os.path.join(state_dir, "threats.json")
+        self.domains_path = os.path.join(state_dir, "domains.json")
         self.req_path = os.path.join(state_dir, "request.json")
+        self.pid_path = os.path.join(state_dir, "sniffer.pid")
+        self._ensure_single_instance()
         self.names = self._load()
         self.threats = self._load_threats()
+        self.domains: dict[str, list] = self._load_domains()
+        self.domain_seen: dict[tuple, float] = {}
         self.mac_to_ip: dict[str, str] = {}
+        self.monitored_ips: set[str] = set()
+
+    def _ensure_single_instance(self) -> None:
+        try:
+            if os.path.isfile(self.pid_path):
+                with open(self.pid_path) as f:
+                    old_pid = int(f.read().strip())
+                if old_pid > 0 and old_pid != os.getpid():
+                    try:
+                        os.kill(old_pid, 9)
+                    except OSError:
+                        pass
+            with open(self.pid_path, "w") as f:
+                f.write(str(os.getpid()))
+        except Exception:
+            pass
+
+    def _cleanup_pid(self) -> None:
+        try:
+            if os.path.isfile(self.pid_path):
+                os.remove(self.pid_path)
+        except OSError:
+            pass
 
     def _load(self) -> dict:
         try:
@@ -187,12 +334,47 @@ class Sniffer:
         except OSError:
             pass
 
+    def _load_domains(self) -> dict:
+        try:
+            with open(self.domains_path) as f:
+                d = json.load(f)
+            return d.get("domains", {})
+        except (FileNotFoundError, json.JSONDecodeError):
+            return {}
+
+    def _save_domains(self) -> None:
+        tmp = self.domains_path + ".tmp"
+        try:
+            with open(tmp, "w", encoding="utf-8") as f:
+                json.dump({"domains": self.domains}, f, ensure_ascii=False)
+            os.replace(tmp, self.domains_path)
+            os.chmod(self.domains_path, 0o666)
+        except OSError:
+            pass
+
+    def _record_domain(self, ip: str, domain: str, src: str, now: float) -> None:
+        domain = (domain or "").strip().lower().rstrip(".")
+        if not domain or "." not in domain or domain.endswith(".arpa"):
+            return
+        key = (ip, domain, src)
+        if now - self.domain_seen.get(key, 0.0) < DOMAIN_DEDUPE_SEC:
+            return
+        self.domain_seen[key] = now
+        if len(self.domain_seen) > 5000:  # dọn bảng dedupe định kỳ
+            cutoff = now - DOMAIN_DEDUPE_SEC * 4
+            self.domain_seen = {k: v for k, v in self.domain_seen.items() if v > cutoff}
+        lst = self.domains.setdefault(ip, [])
+        lst.append({"d": domain, "ts": now, "src": src})
+        if len(lst) > MAX_DOMAINS_PER_IP:
+            del lst[:-MAX_DOMAINS_PER_IP]
+
     def _write_status(self, running: bool, note: str = "") -> None:
         try:
             with open(self.status, "w") as f:
                 json.dump({"running": running, "pid": os.getpid(), "ts": time.time(),
                            "iface": self.iface, "count": len(self.names),
                            "threats_count": len(self.threats),
+                           "domains_count": sum(len(v) for v in self.domains.values()),
                            "note": note}, f)
             os.chmod(self.status, 0o666)
         except OSError:
@@ -210,8 +392,8 @@ class Sniffer:
             self._write_status(False, "pcap_open_live lỗi: " + errbuf.value.decode())
             return 1
         fp = bpf_program()
-        # Bắt cả gói DHCP và ARP
-        bpf_expr = b"arp or (udp and (port 67 or port 68))"
+        # Bắt DHCP, ARP, DNS (udp/53) và TLS ClientHello (tcp/443)
+        bpf_expr = b"arp or (udp and (port 67 or port 68)) or udp port 53 or tcp port 443"
         if lib.pcap_compile(handle, ctypes.byref(fp), bpf_expr, 1, PCAP_NETMASK_UNKNOWN) == 0:
             lib.pcap_setfilter(handle, ctypes.byref(fp))
 
@@ -235,9 +417,18 @@ class Sniffer:
                     if os.path.isfile(self.req_path):
                         with open(self.req_path) as rf:
                             rdata = json.load(rf)
+                            if rdata.get("shutdown"):
+                                self._write_status(False, "shutdown")
+                                self._cleanup_pid()
+                                return 0
                             gw_ip = rdata.get("gateway_ip", "").strip()
                             gw_mac = rdata.get("gateway_mac", "").strip().lower()
                             our_mac = rdata.get("our_mac", "").strip().lower()
+                            mon = set()
+                            for ent in rdata.get("entries", []):
+                                if ent.get("mode") == "monitor" and ent.get("ip"):
+                                    mon.add(str(ent["ip"]))
+                            self.monitored_ips = mon
                 except Exception:
                     pass
 
@@ -297,9 +488,24 @@ class Sniffer:
                             self.threats[smac] = th
                             self._save_threats()
 
+                # 3. DNS & TLS SNI — chỉ ghi cho thiết bị đang được giám sát
+                if self.monitored_ips:
+                    pdns = _parse_dns_queries(pkt)
+                    if pdns:
+                        src_ip, qnames = pdns
+                        if src_ip in self.monitored_ips:
+                            for qn in qnames:
+                                self._record_domain(src_ip, qn, "dns", now)
+                    psni = _parse_tls_sni(pkt)
+                    if psni:
+                        src_ip, sni_name = psni
+                        if src_ip in self.monitored_ips:
+                            self._record_domain(src_ip, sni_name, "sni", now)
+
             if now - last_save >= SAVE_EVERY:
                 self._save()
                 self._save_threats()
+                self._save_domains()
                 self._write_status(True)
                 last_save = now
 

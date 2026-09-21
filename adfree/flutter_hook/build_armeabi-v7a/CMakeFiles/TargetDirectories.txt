@@ -1,0 +1,3 @@
+/Volumes/Razer/code/superapp/adfree/flutter_hook/build_armeabi-v7a/CMakeFiles/flutter_hook.dir
+/Volumes/Razer/code/superapp/adfree/flutter_hook/build_armeabi-v7a/CMakeFiles/edit_cache.dir
+/Volumes/Razer/code/superapp/adfree/flutter_hook/build_armeabi-v7a/CMakeFiles/rebuild_cache.dir

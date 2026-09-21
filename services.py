@@ -1847,15 +1847,15 @@ def delete_stuck_update(temp_dir_str: str, log: JobLog) -> None:
 
     allowed = False
     try:
-        resolved = temp_dir.resolve()
+        parent_resolved = temp_dir.parent.resolve()
     except OSError:
-        resolved = temp_dir
+        parent_resolved = temp_dir.parent
     for root in _temp_scan_roots():
         try:
-            resolved.relative_to(root.resolve())
-            allowed = True
-            break
-        except ValueError:
+            if parent_resolved == root.resolve():
+                allowed = True
+                break
+        except OSError:
             continue
     if not allowed:
         raise RuntimeError(f"Duong dan khong hop le: {temp_dir}")
@@ -1867,12 +1867,21 @@ def delete_stuck_update(temp_dir_str: str, log: JobLog) -> None:
     if kind == "sparkle":
         app_stem = app_path.stem if app_path else temp_dir.name.split("-update-", 1)[0]
         _cleanup_sparkle_staging(temp_dir, app_stem, log)
-    elif temp_dir.exists() or temp_dir.is_symlink():
+    elif temp_dir.is_symlink():
+        # temp_dir la symlink do App Mover tao (vd ~/Library/Caches/<bundle-id>.ShipIt
+        # tro ra o ngoai). Chi unlink se khong giai phong dung luong that su tren o ngoai,
+        # nen xoa noi dung o dich roi tao lai thu muc rong, giu nguyen symlink.
+        real_dir = temp_dir.resolve()
+        log.info(f"Xoa noi dung ShipIt tren o dich: {real_dir}")
+        if real_dir.is_dir():
+            shutil.rmtree(real_dir, ignore_errors=True)
+        real_dir.mkdir(parents=True, exist_ok=True)
+    elif temp_dir.exists():
         log.info(f"Xoa thu muc ShipIt: {temp_dir}")
         remove_path(temp_dir)
 
-    if kind == "squirrel" and (temp_dir.exists() or temp_dir.is_symlink()):
-        raise RuntimeError(f"Khong the xoa: {temp_dir}")
+    if kind == "squirrel" and temp_dir.is_dir() and any(temp_dir.iterdir()):
+        raise RuntimeError(f"Khong the xoa het: {temp_dir}")
     if kind == "sparkle" and temp_dir.exists() and _is_mount_point(temp_dir):
         raise RuntimeError(f"Khong the go bo mount: {temp_dir}")
 

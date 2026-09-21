@@ -433,11 +433,25 @@ class Patcher:
     '''Pipeline vá một APK: decode → patch smali/manifest → build → sign.'''
 
     def __init__(self, workdir=None, fake_reward=True, offline=True,
-                 analyze_assets=False, block_ads=True):
+                 analyze_assets=False, block_ads=True, translate_lang=None,
+                 deep_translate=True, translate_data=False,
+                 translate_code=False):
         self.no_reward = not fake_reward
         self.no_offline = not offline
         self.workdir = Path(workdir) if workdir else None
         self.analyze_assets = analyze_assets
+        self.block_ads = block_ads
+        self.translate_lang = translate_lang
+        # Dịch cả kho text ngoài res/values (Hermes/React Native, file i18n
+        # trong assets…). Tắt bằng deep_translate=False nếu chỉ muốn res.
+        self.deep = deep_translate
+        # Dịch cả dữ liệu nội dung app (JSON câu hỏi, bài học…) — mặc định
+        # KHÔNG, vì dịch nội dung có thể phá chính chức năng của app
+        self.translate_data = translate_data
+        # Dịch chuỗi hardcode trong code (smali) — mặc định TẮT: chuỗi trong
+        # code vừa là text hiển thị vừa là khoá/tham số, dịch nhầm là sai logic
+        self.translate_code = translate_code
+        self._flutter_embedded = False
         self.log = []
         self.progress = None   # callback(step, label, pct) do server gán vào
         # chọn cách chạy công cụ Java: sẵn trên máy, hoặc lùi về Docker
@@ -494,52 +508,158 @@ class Patcher:
             return report
         log.append('[decode] OK')
 
-        # 2) Quét SDK
-        sigs = load_signatures()
-        detection = scan_sdks(decoded, sigs)
-        report['detection'] = detection
-        log.append(f"[scan] Phát hiện {len(detection['sdks'])} SDK, "
-                   f"{detection['total_files']} file smali.")
+        # 1.4) Kiểm kê công nghệ + kho text (báo cho UI biết text nằm ở đâu)
+        inventory = None
+        if self.translate_lang:
+            try:
+                import apptech
+                inventory = apptech.inventory(input_apk, log)
+                label = apptech.app_label(input_apk)
+                if label:
+                    import translator as _t
+                    _t.keep_words([label] + label.split())
+                report['apptech'] = inventory
+                log.append('[apptech] công nghệ: '
+                           + (', '.join(inventory['platform_names']) or '?')
+                           + ' · kho text dịch được: '
+                           + (', '.join(inventory['ready_kinds']) or 'không có'))
+            except Exception as e:
+                log.append(f'[apptech] không kiểm kê được kho text: {e}')
 
-        # 3) Vô hiệu hóa method SDK
-        neutralized = 0
-        for sdk in detection['sdks']:
-            names = set()
-            for s in sigs['sdks']:
-                if s['name'] == sdk['name']:
-                    names.update(s.get('neutralize', []))
-            for smali in _sdk_smali_files(decoded, sdk):
-                neutralized += patch_smali_file(smali, names)
-        report['neutralized'] = neutralized
-        self._progress('patch', 'Đã vô hiệu hoá SDK quảng cáo', 40)
-        log.append(f'[patch] Vô hiệu hóa {neutralized} method.')
+        # 1.5) Dịch ngôn ngữ (nếu bật) — trước khi vá/build vì tác động res/
+        if self.translate_lang:
+            from translator import apply as translate_apply
+            lo, hi = (8, 35) if self.block_ads else (10, 60)
 
-        # 4) Manifest
-        report['manifest'] = clean_manifest(decoded, sigs, detection, log)
+            def tprog(done, total, label=None):
+                # label do translator gửi kèm (tải runtime/model, đang dịch…);
+                # không có thì hiện số chuỗi đã xử lý
+                pct = lo + int((hi - lo) * done / max(total, 1))
+                self._progress('translate', label or
+                               f'Đang dịch ngôn ngữ: {done}/{total} chuỗi…',
+                               pct)
 
-        # 5) Offline patch
-        smali_dirs = find_smali_dirs(decoded)
-        report['offline'] = (offlinepatch.apply(decoded, detection,
-                                                smali_dirs, log)
-                             if not self.no_offline else
-                             {'enabled': False, 'files': 0, 'rewrites': 0})
+            log.append(f'[translate] bắt đầu dịch sang "{self.translate_lang}"')
+            report['translate'] = translate_apply(decoded, self.translate_lang,
+                                                  log, tprog)
+            # Chuỗi hardcode trong code (const-string trong smali) — nhiều app
+            # nhét text giao diện thẳng vào code, không qua res/values
+            if self.translate_code:
+                try:
+                    import smali_strings
+                    report['translate_code'] = smali_strings.apply(
+                        decoded, self.translate_lang, log, tprog)
+                except Exception as e:
+                    log.append(f'[smali] bỏ qua dịch chuỗi trong code: {e}')
 
-        # 6) Reward patch
-        report['reward'] = (rewardpatch.apply(decoded, detection,
-                                              smali_dirs, log)
-                            if not self.no_reward else
-                            {'enabled': False, 'methods_patched': 0})
+            # Flutter: nhúng dict + hook .so vào cây decode TRƯỚC apktool build
+            flutter_embedded = False
+            if inventory and any(s['kind'] == 'flutter_aot'
+                                 for s in inventory.get('stores', [])):
+                try:
+                    import flutter_translate
+                    freport = flutter_translate.embed_into_decoded(
+                        decoded, input_apk, self.translate_lang, log, tprog)
+                    if freport:
+                        report['flutter_translate'] = freport
+                        flutter_embedded = bool(freport.get('embedded'))
+                except Exception as e:
+                    log.append(f'[flutter] lỗi nhúng hook: {e}')
+            else:
+                flutter_embedded = False
+            self._flutter_embedded = flutter_embedded
+        if self.block_ads:
+            # 2) Quét SDK
+            sigs = load_signatures()
+            detection = scan_sdks(decoded, sigs)
+            report['detection'] = detection
+            log.append(f"[scan] Phát hiện {len(detection['sdks'])} SDK, "
+                       f"{detection['total_files']} file smali.")
+
+            # 3) Vô hiệu hóa method SDK
+            neutralized = 0
+            for sdk in detection['sdks']:
+                names = set()
+                for s in sigs['sdks']:
+                    if s['name'] == sdk['name']:
+                        names.update(s.get('neutralize', []))
+                for smali in _sdk_smali_files(decoded, sdk):
+                    neutralized += patch_smali_file(smali, names)
+            report['neutralized'] = neutralized
+            self._progress('patch', 'Đã vô hiệu hoá SDK quảng cáo', 40)
+            log.append(f'[patch] Vô hiệu hóa {neutralized} method.')
+
+            # 4) Manifest
+            report['manifest'] = clean_manifest(decoded, sigs, detection, log)
+
+            # 5) Offline patch
+            smali_dirs = find_smali_dirs(decoded)
+            report['offline'] = (offlinepatch.apply(decoded, detection,
+                                                    smali_dirs, log)
+                                 if not self.no_offline else
+                                 {'enabled': False, 'files': 0, 'rewrites': 0})
+
+            # 6) Reward patch
+            report['reward'] = (rewardpatch.apply(decoded, detection,
+                                                  smali_dirs, log)
+                                if not self.no_reward else
+                                {'enabled': False, 'methods_patched': 0})
+        else:
+            # Chế độ chỉ-dịch: bỏ qua mọi bước vá ads
+            report['detection'] = {'sdks': [], 'total_files': 0}
+            report['neutralized'] = 0
+            report['manifest'] = {'components_removed': [],
+                                  'permissions_removed': []}
+            report['offline'] = {'enabled': False, 'files': 0, 'rewrites': 0}
+            report['reward'] = {'enabled': False, 'methods_patched': 0}
         self._progress('build', 'Đóng gói lại APK…', 75)
 
         # 7) Build + sign
         unsigned = work / 'unsigned.apk'
         rc, out = self.tools.run(['java', '-jar', APKTOOL, 'b', decoded,
                                   '-o', unsigned], mounts)
-        self._progress('sign', 'Căn lề và ký APK…', 90)
         if rc != 0:
             report['error'] = 'apktool build thất bại'
             report['detail'] = out[-1500:]
             return report
+
+        # 7.5) Dịch các kho text ngoài res/values (Hermes bundle của React
+        # Native, file i18n trong assets…) — sửa thẳng trong file zip của APK
+        # vừa build, không qua apktool nên không có rủi ro aapt2.
+        if self.translate_lang and self.deep and inventory and \
+                [k for k in inventory['ready_kinds'] if k != 'android_res']:
+            try:
+                import deep_translate
+                self._progress('translate',
+                               'Đang dịch text trong assets/bundle…', 80)
+
+                def dprog(done, total, label=None):
+                    pct = 80 + int(8 * done / max(total, 1))
+                    self._progress('translate', label or
+                                   f'Đang dịch assets: {done}/{total}…', pct)
+
+                deep_out = work / 'deep.apk'
+                # Mặc định: mọi kho ready trừ res (và trừ flutter nếu đã embed).
+                # asset_data (partial) chỉ khi user bật translate_data.
+                exclude = {'android_res'}
+                if getattr(self, '_flutter_embedded', False):
+                    exclude.add('flutter_aot')
+                if self.translate_data:
+                    kinds = [k for k in
+                             {s['kind'] for s in inventory['stores']
+                              if s['status'] in ('ready', 'partial')}
+                             if k not in exclude]
+                else:
+                    kinds = [k for k in inventory.get('ready_kinds', [])
+                             if k not in exclude]
+                report['deep_translate'] = deep_translate.apply(
+                    unsigned, deep_out, self.translate_lang, inventory,
+                    log, dprog, include_kinds=kinds)
+                if deep_out.exists():
+                    unsigned = deep_out
+            except Exception as e:
+                log.append(f'[deep] bỏ qua dịch sâu vì lỗi: {e}')
+        self._progress('sign', 'Căn lề và ký APK…', 90)
         report['signature'] = sign_apk(unsigned, output_apk, work, log,
                                        tools=self.tools)
         report['finished'] = datetime.now().isoformat(timespec='seconds')
@@ -557,7 +677,9 @@ def _sdk_smali_files(decoded, sdk):
 
 
 def patch_bundle(source, out_dir, workdir=None, fake_reward=True,
-                 on_progress=None, offline=True, analyze_assets=False):
+                 on_progress=None, offline=True, analyze_assets=False,
+                 block_ads=True, translate_lang=None, translate_data=False,
+                 translate_code=False):
     '''
     Vá một bộ split APK (thư mục hoặc .xapk/.apks): vá base, ký lại mọi file,
     đóng gói kèm install.sh. Trả về report.
@@ -571,7 +693,10 @@ def patch_bundle(source, out_dir, workdir=None, fake_reward=True,
     base = bundle.pick_base(apks)
     splits = [a for a in apks if a != base]
     p = Patcher(workdir=work / 'patch-base', fake_reward=fake_reward,
-                offline=offline, analyze_assets=analyze_assets)
+                offline=offline, analyze_assets=analyze_assets,
+                block_ads=block_ads, translate_lang=translate_lang,
+                translate_data=translate_data,
+                translate_code=translate_code)
     if callable(on_progress):
         p.progress = on_progress
     patched_base = work / ('patched-' + base.name)

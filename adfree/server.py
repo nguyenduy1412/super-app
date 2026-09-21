@@ -66,6 +66,8 @@ jobs = {}          # id -> dict job (thread-safe qua lock)
 jobs_lock = threading.Lock()
 STEPS = {
     "decode": "Giải nén APK",
+    "translate": "Dịch ngôn ngữ",
+    "apptech": "Nhận diện công nghệ",
     "assets": "Phân tích tài nguyên",
     "analyze": "Quét SDK quảng cáo",
     "patch": "Vô hiệu hóa quảng cáo",
@@ -140,7 +142,8 @@ def run_job(job_id):
                     "step_label": STEPS.get(step, step),
                     "progress": pct or job.get("progress", 0)})
     # Chế độ chỉ phân tích: đọc tài nguyên rồi trả báo cáo, không decode/vá/ký
-    if not job.get("block_ads"):
+    # (còn dịch ngôn ngữ thì phải decode/build/ký nên chạy nhánh patch bên dưới)
+    if not job.get("block_ads") and not job.get("translate_lang"):
         try:
             target = job["input"]
             if job.get("kind") == "bundle":
@@ -154,6 +157,14 @@ def run_job(job_id):
             on_progress("assets", "Đang phân tích tài nguyên…", 30)
             report = {"assets": assetinfo.analyze(target, job["log"])}
             report["tech"] = techinfo.cached(job["input"])
+            # Kiểm kê kho text: cho biết app dùng công nghệ gì và text giao
+            # diện nằm ở đâu (res/values, Hermes bundle, assets…) — dịch được
+            # hay không, kèm lý do.
+            try:
+                import apptech
+                report["apptech"] = apptech.inventory(target, job["log"])
+            except Exception as e:
+                job["log"].append(f"[apptech] lỗi kiểm kê kho text: {e}")
             report["api"] = api_extract.cached(target)
             platforms = ", ".join(p["name"] for p in report["tech"]["platforms"])
             job["log"].append(f"[tech] nền tảng: {platforms or 'không xác định'}")
@@ -191,7 +202,11 @@ def run_job(job_id):
     patcher = Patcher(workdir=JOBS_DIR / job_id / "work",
                       fake_reward=job.get("fake_reward", True),
                       offline=job.get("offline", True),
-                      analyze_assets=job.get("analyze_assets", False))
+                      analyze_assets=job.get("analyze_assets", False),
+                      block_ads=job.get("block_ads", True),
+                      translate_lang=job.get("translate_lang"),
+                      translate_data=job.get("translate_data", False),
+                      translate_code=job.get("translate_code", False))
     patcher.progress = on_progress
     try:
         if job.get("kind") == "bundle":
@@ -200,7 +215,11 @@ def run_job(job_id):
             report = patch_bundle(job["input"], out, JOBS_DIR / job_id / "work",
                                   job.get("fake_reward", True), on_progress,
                                   offline=job.get("offline", True),
-                                  analyze_assets=job.get("analyze_assets", False))
+                                  analyze_assets=job.get("analyze_assets", False),
+                                  block_ads=job.get("block_ads", True),
+                                  translate_lang=job.get("translate_lang"),
+                      translate_data=job.get("translate_data", False),
+                      translate_code=job.get("translate_code", False))
             out_apk = Path(report["bundle"]["zip"])
         else:
             out_apk = JOBS_DIR / job_id / "patched.apk"
@@ -220,6 +239,19 @@ def run_job(job_id):
                                       else "[env] không phát hiện API key nào")
             except Exception as e:
                 report["log"].append(f"[env] lỗi quét key: {e}")
+        if report.get("error"):
+            # patcher trả report có 'error' (decode/build thất bại) thay vì
+            # ném exception — không có cái này job vẫn báo "done" và người
+            # dùng tải về một file rỗng.
+            with jobs_lock:
+                job.update({
+                    "status": "error",
+                    "error": report["error"],
+                    "detail": report.get("detail", ""),
+                    "report": {k: v for k, v in report.items() if k != "log"},
+                    "log": report.get("log", patcher.log),
+                    "finished_at": datetime.now().isoformat(timespec="seconds")})
+            return
         with jobs_lock:
             job.update({"status": "done", "progress": 100,
                         "report": {k: v for k, v in report.items() if k != "log"},
@@ -379,6 +411,19 @@ class Handler(BaseHTTPRequestHandler):
             self.send_file(STATIC_DIR / "index.html", "text/html; charset=utf-8")
         elif path == "/api/tools":
             self.send_json(patcher.tool_status())
+        elif m := re.fullmatch(r"/api/jobs/([0-9a-f-]+)/apptech", path):
+            job = jobs.get(m.group(1))
+            if not job:
+                self.send_json({"error": "không tìm thấy job"}, 404)
+                return
+            import apptech
+            self.send_json(apptech.inventory(job["input"], job["log"]))
+        elif path == "/api/mt":
+            # Trạng thái engine dịch offline: runtime/model đã tải chưa, tốn
+            # bao nhiêu đĩa, ngôn ngữ nào có model. UI dùng để báo trước cho
+            # người dùng là lần dịch đầu sẽ phải tải ~140 MB.
+            import offline_mt
+            self.send_json(offline_mt.status(check_index=True))
         elif m := re.fullmatch(r"/api/jobs/([0-9a-f-]+)/unity", path):
             job = jobs.get(m.group(1))
             if not job:
@@ -559,9 +604,16 @@ class Handler(BaseHTTPRequestHandler):
         # (chỉ đọc file, không sửa/ký). Tích cả hai = vá ads + kèm báo cáo tài nguyên.
         block_ads = self.headers.get("X-Block-Ads", "1") != "0"
         analyze = self.headers.get("X-Analyze", "0") == "1"
-        if not block_ads and not analyze:
+        translate_lang = (self.headers.get("X-Translate-Lang") or
+                          "").strip().lower()
+        if translate_lang and not re.fullmatch(r"[a-z]{2,3}(?:-[a-z]{2,4})?",
+                                               translate_lang):
             shutil.rmtree(jdir, ignore_errors=True)
-            self.send_json({"error": "hãy tích ít nhất một tuỳ chọn"}, 400)
+            self.send_json({"error": f"mã ngôn ngữ không hợp lệ: {translate_lang}"}, 400)
+            return
+        if not block_ads and not analyze and not translate_lang:
+            shutil.rmtree(jdir, ignore_errors=True)
+            self.send_json({"error": "hãy bật ít nhất một tuỳ chọn"}, 400)
             return
         # Upload APK mới -> dọn sạch dữ liệu phân tích của các APK trước
         # (giữ lại thư mục của chính job này — nó chưa kịp đăng ký vào jobs)
@@ -580,6 +632,13 @@ class Handler(BaseHTTPRequestHandler):
             "offline": self.headers.get("X-Offline", "1") != "0",
             # Header X-Analyze: 1 để kèm phân tích tài nguyên (ảnh, video, font, lottie…)
             "analyze_assets": analyze,
+            # Header X-Translate-Lang: mã ngôn ngữ (vi/en/ja…) để dịch string resources
+            "translate_lang": translate_lang or None,
+            # X-Translate-Data: 1 để dịch cả dữ liệu nội dung app (JSON câu
+            # hỏi/bài học trong assets) — mặc định không, dễ phá nội dung
+            "translate_data": self.headers.get("X-Translate-Data", "0") == "1",
+            # X-Translate-Code: 1 để dịch cả chuỗi hardcode trong code (smali)
+            "translate_code": self.headers.get("X-Translate-Code", "0") == "1",
             "step": None, "step_label": None, "progress": 0,
             "created_at": datetime.now().isoformat(timespec="seconds"),
             "log": [],

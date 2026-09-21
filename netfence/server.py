@@ -1,4 +1,4 @@
-#!/usr/bin/env python3
+#!/usr/bin/python3
 """NetFence — LAN inventory & reversible access control (bản macOS, kiểu LocalFence).
 
 Chạy dưới quyền user thường:
@@ -8,6 +8,10 @@ Chạy dưới quyền user thường:
 
 Việc CHẶN cần một engine chạy root (arp_engine.py). Lần đầu bấm "Chặn", macOS sẽ
 hiện hộp thoại nhập mật khẩu admin để khởi động engine. Chỉ dùng cho LAN của bạn.
+
+Lưu ý macOS 15+ / 27 (Local Network Privacy): Homebrew Python (/opt/homebrew/...)
+thường bị chặn đọc bảng ARP (`arp -an` trả về rỗng) → quét thiết bị thất bại.
+NetFence ưu tiên /usr/bin/python3 (Apple-signed) và tự chuyển sang interpreter đó.
 """
 from __future__ import annotations
 
@@ -24,7 +28,64 @@ import time
 from concurrent.futures import ThreadPoolExecutor
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
-from urllib.parse import urlparse
+from urllib.parse import urlparse, parse_qs
+
+# macOS Local Network Privacy: binary không do Apple ký (Homebrew Python) có thể
+# nhận `arp -an` rỗng dù Terminal chạy lệnh đó bình thường. Dùng Python hệ thống.
+_SYSTEM_PYTHON = "/usr/bin/python3"
+
+
+def _arp_cli_readable() -> bool:
+    try:
+        r = subprocess.run(
+            ["/usr/sbin/arp", "-an"],
+            capture_output=True, text=True, timeout=5,
+        )
+        return bool(r.stdout.strip())
+    except (OSError, subprocess.TimeoutExpired):
+        return False
+
+
+def _ensure_local_network_python() -> None:
+    """Ưu tiên /usr/bin/python3 trên macOS để tránh Local Network Privacy.
+
+    Launcher (Run Super App.command) phải start thẳng /usr/bin/python3.
+    Hàm này phòng vệ khi chạy thủ công bằng Homebrew `python3`.
+    """
+    if sys.platform != "darwin" or os.environ.get("NETFENCE_NO_REEXEC"):
+        return
+    try:
+        if os.path.isfile(_SYSTEM_PYTHON) and os.path.samefile(sys.executable, _SYSTEM_PYTHON):
+            return
+    except OSError:
+        pass
+    # Chỉ ép chuyển khi đang dùng Python không do Apple (Homebrew/MacPorts/pyenv…)
+    # hoặc khi ARP thực sự bị chặn.
+    non_system = any(
+        p in sys.executable
+        for p in ("/opt/homebrew/", "/usr/local/Cellar/", "/usr/local/opt/",
+                  "pyenv", "miniconda", "anaconda", "/opt/local/")
+    )
+    if not non_system and not _local_network_blocked():
+        return
+    if not os.path.isfile(_SYSTEM_PYTHON):
+        print(
+            "Cảnh báo NetFence: không tìm thấy /usr/bin/python3 "
+            "(cần để đọc ARP trên macOS 15+/27).",
+            file=sys.stderr, flush=True,
+        )
+        return
+    print(
+        f"NetFence: chuyển từ {sys.executable} sang {_SYSTEM_PYTHON} "
+        "(tránh Local Network Privacy chặn ARP)...",
+        flush=True,
+    )
+    os.environ["NETFENCE_NO_REEXEC"] = "1"
+    os.execv(
+        _SYSTEM_PYTHON,
+        [_SYSTEM_PYTHON, os.path.abspath(__file__), *sys.argv[1:]],
+    )
+
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 import oui  # noqa: E402
@@ -42,17 +103,22 @@ STATUS_FILE = STATE_DIR / "status.json"
 DHCP_NAMES = STATE_DIR / "dhcp_names.json"
 SNIFFER_STATUS = STATE_DIR / "sniffer_status.json"
 THREATS_FILE = STATE_DIR / "threats.json"
+DOMAINS_FILE = STATE_DIR / "domains.json"
 _last_threat_counts: dict[str, int] = {}
 
 DEFAULT_INTERVAL_MS = 1000
 MAX_ENTRIES = 255
+AUTO_SCAN_INTERVAL = 90.0   # giây giữa các lần tự quét nền để dò tên thiết bị lạ
 
 _lock = threading.RLock()
 _blocks: dict[str, dict] = {}      # ip -> {"mac":.., "name":.., "interval_ms":.., "status":.., "fail_count":.., "last_seen":..}
+_monitors: dict[str, dict] = {}    # ip -> {...} chế độ giám sát (MITM trong suốt, xem tên miền)
 _generation = int(time.time())
 _events: list[dict] = []
 _event_seq = 0
 _last_subnet = ""
+_auto_monitor_enabled = False  # tự bắt traffic thiết bị chưa xác định để dò tên (mặc định tắt)
+_last_auto_scan = 0.0
 
 
 def _add_event(event_type: str, message: str, data: dict | None = None) -> None:
@@ -111,7 +177,7 @@ def net_info() -> dict:
         m_ip = re.search(r"inet (\d+\.\d+\.\d+\.\d+) netmask (0x[0-9a-fA-F]+)", ic)
         if m_ip:
             ip, netmask_hex = m_ip.group(1), m_ip.group(2)
-        m_mac = re.search(r"ether ([0-9a-fA-F:]{17})", ic)
+        m_mac = re.search(r"ether ((?:[0-9a-fA-F]{1,2}:){5}[0-9a-fA-F]{1,2})", ic)
         if m_mac:
             mac = _norm_mac(m_mac.group(1))
 
@@ -149,9 +215,21 @@ def _norm_mac(mac: str) -> str:
         return mac.lower()
 
 
+def _is_placeholder_mac(mac: str) -> bool:
+    """MAC giả / bị Local Network Privacy che (thường gặp: 02:00:00:00:00:00)."""
+    return _norm_mac(mac) in (
+        "00:00:00:00:00:00",
+        "02:00:00:00:00:00",
+        "ff:ff:ff:ff:ff:ff",
+    )
+
+
 def _arp_table() -> dict[str, str]:
-    """ip -> mac (đã chuẩn hoá), bỏ các entry incomplete."""
-    out = _run(["arp", "-an"])
+    """ip -> mac (đã chuẩn hoá), bỏ incomplete / MAC giả / multicast.
+
+    Dùng đường dẫn tuyệt đối /usr/sbin/arp để tránh nhầm binary khác trong PATH.
+    """
+    out = _run(["/usr/sbin/arp", "-an"])
     table: dict[str, str] = {}
     for line in out.splitlines():
         m = re.search(r"\((\d+\.\d+\.\d+\.\d+)\) at ([0-9a-fA-F:]+)", line)
@@ -160,12 +238,31 @@ def _arp_table() -> dict[str, str]:
         ip, mac = m.group(1), m.group(2)
         if "incomplete" in line or mac.count(":") != 5:
             continue
-        table[ip] = _norm_mac(mac)
+        mac_n = _norm_mac(mac)
+        if _is_placeholder_mac(mac_n):
+            continue
+        # Bỏ multicast/broadcast (224.x, 239.x, *.255 broadcast đã lọc qua placeholder ff:..)
+        try:
+            a = ipaddress.ip_address(ip)
+            if a.is_multicast:
+                continue
+        except ValueError:
+            continue
+        table[ip] = mac_n
     return table
 
 
 def _arp_lookup(ip: str) -> str:
     return _arp_table().get(ip, "")
+
+
+def _local_network_blocked() -> bool:
+    """True khi process hiện tại bị macOS chặn đọc ARP LAN."""
+    raw = _run(["/usr/sbin/arp", "-an"]).strip()
+    if not raw:
+        return True
+    # Có output nhưng toàn incomplete / placeholder → coi như bị chặn/che
+    return not bool(_arp_table()) and "incomplete" not in raw.lower()
 
 
 # --------------------------------------------------------------------------
@@ -197,7 +294,9 @@ def _reverse_name(ip: str) -> str:
         socket.setdefaulttimeout(None)
 
 
-def scan() -> dict:
+def scan(auto_monitor: bool | None = None) -> dict:
+    if auto_monitor is None:
+        auto_monitor = _auto_monitor_enabled
     info = net_info()
     result = {"ok": True, "info": info, "devices": [], "error": None}
     if not info["cidr"]:
@@ -216,6 +315,18 @@ def scan() -> dict:
     time.sleep(1.6)
     table = _arp_table()
 
+    if not table and _local_network_blocked():
+        result.update(
+            ok=False,
+            error=(
+                "Không đọc được bảng ARP — macOS Local Network Privacy đang chặn "
+                f"Python hiện tại ({sys.executable}). Hãy tắt NetFence, chạy lại bằng "
+                "/usr/bin/python3 (hoặc Super App đã cập nhật), và nếu cần bật "
+                "Quyền riêng tư > Mạng cục bộ cho Terminal."
+            ),
+        )
+        return result
+
     ips = [ip for ip in table if ipaddress.ip_address(ip) in net]
 
     def _role(ip: str) -> str:
@@ -225,10 +336,14 @@ def scan() -> dict:
             return "self"
         return "device"
 
-    # Nhận diện song song: mDNS + NetBIOS + reverse DNS + OUI + TTL
+    # SSDP/UPnP: 1 lượt quét chung cho cả mạng (khỏi mỗi thiết bị tự bắn multicast riêng)
+    ssdp_map = fingerprint.ssdp_discover_all()
+
+    # Nhận diện song song: mDNS + NetBIOS + reverse DNS + SSDP + OUI + TTL
     enrich: dict[str, dict] = {}
     with ThreadPoolExecutor(max_workers=32) as ex:
-        futs = {ex.submit(fingerprint.fingerprint, ip, table[ip], _role(ip)): ip
+        futs = {ex.submit(fingerprint.fingerprint, ip, table[ip], _role(ip),
+                          ssdp=ssdp_map.get(ip, "")): ip
                 for ip in ips}
         for fut in futs:
             ip = futs[fut]
@@ -237,8 +352,8 @@ def scan() -> dict:
             except Exception:  # noqa: BLE001
                 enrich[ip] = {"vendor": oui.lookup(table[ip]), "name": "",
                               "type": "Không rõ", "os": "—", "icon": "❓",
-                              "netbios": "", "mdns": "", "ttl": None,
-                              "confidence": "—"}
+                              "netbios": "", "mdns": "", "rdns": "", "ssdp": "",
+                              "ttl": None, "confidence": "—"}
 
     with _lock:
         blocked = dict(_blocks)
@@ -250,8 +365,9 @@ def scan() -> dict:
         e = dict(enrich[ip])
         dn = dhcp.get(table[ip].lower())
         if dn and _role(ip) == "device":
-            # Bổ sung từ DHCP: tên và loại/OS (ưu tiên khi thiết bị im lặng)
-            if not e.get("name") and dn.get("hostname"):
+            # Bổ sung từ DHCP: tên và loại/OS (ưu tiên khi thiết bị im lặng
+            # hoặc khi tên tìm được chỉ là tên chung chung kiểu "android-3")
+            if fingerprint.is_generic_name(e.get("name", "")) and dn.get("hostname"):
                 e["name"] = dn["hostname"]
             cls = fingerprint.from_dhcp(dn.get("hostname", ""), dn.get("vendor_class", ""))
             if cls and (e.get("type") in (None, "Không rõ")
@@ -270,6 +386,72 @@ def scan() -> dict:
         for d in devices:
             if d["ip"] in _blocks and not _blocks[d["ip"]].get("name") and d.get("name"):
                 _blocks[d["ip"]]["name"] = d["name"]
+
+    # Tự động dò tên: bắt traffic các thiết bị CHƯA XÁC ĐỊNH, ngừng khi có tên
+    if auto_monitor and _auto_monitor_enabled:
+        to_add: list[dict] = []
+        resolved: list[tuple[str, str]] = []
+        net_addr = net.network_address
+        bc_addr = net.broadcast_address
+        with _lock:
+            mon_ips_snapshot = list(_monitors.keys())
+        doms_map = _read_domains(mon_ips_snapshot)
+        with _lock:
+            for d in devices:
+                ip = d["ip"]
+                try:
+                    addr = ipaddress.ip_address(ip)
+                except ValueError:
+                    continue
+                if addr in (net_addr, bc_addr):   # bỏ địa chỉ mạng/broadcast (.0/.255)
+                    continue
+                if d["role"] != "device":
+                    continue
+                mon_entry = _monitors.get(ip)
+                # Đã xác định được thiết bị chưa? (có tên / nhận diện cao / đoán cao từ traffic)
+                guess = None
+                if mon_entry and mon_entry.get("auto"):
+                    guess = fingerprint.guess_from_domains(
+                        [e["d"] for e in doms_map.get(ip, [])])
+                identified = (bool(d.get("name"))
+                              or d.get("confidence") == "cao"
+                              or bool(guess and guess.get("confidence") == "cao"))
+                if identified and mon_entry and mon_entry.get("auto"):
+                    del _monitors[ip]
+                    label = (d.get("name")
+                             or (f"{guess['icon']} {guess['type']} (theo traffic)" if guess else None)
+                             or d.get("type") or ip)
+                    resolved.append((ip, label))
+                    continue
+                if (not identified
+                        and ip not in _blocks and ip not in _monitors
+                        and len(_monitors) < MAX_ENTRIES):
+                    _monitors[ip] = {
+                        "mac": d["mac"], "name": "", "interval_ms": DEFAULT_INTERVAL_MS,
+                        "status": "online", "last_seen": time.time(), "auto": True,
+                    }
+                    to_add.append({"ip": ip, "mac": d["mac"]})
+        if to_add:
+            ok, _msg = ensure_engine()
+            if not ok:
+                with _lock:
+                    for e in to_add:
+                        _monitors.pop(e["ip"], None)
+            else:
+                ensure_sniffer()
+                _bump_and_push()
+                _add_event(
+                    "auto_monitor",
+                    f"🧠 Tự động bắt traffic {len(to_add)} thiết bị chưa xác định để dò tên qua DNS/SNI",
+                    {"ips": [e["ip"] for e in to_add]}
+                )
+        for ip, name in resolved:
+            _bump_and_push()
+            _add_event(
+                "auto_monitor",
+                f"✅ Đã xác định thiết bị {ip}: {name} — ngừng giám sát tự động",
+                {"ip": ip, "name": name}
+            )
 
     result["devices"] = devices
     result["count"] = len(devices)
@@ -292,6 +474,29 @@ def _read_threats() -> list:
             return d.get("threats", [])
     except (FileNotFoundError, json.JSONDecodeError):
         return []
+
+
+_last_domains_cache: dict[str, list] = {}
+
+
+def _read_domains(monitored_ips: list[str]) -> dict:
+    """Đọc domains.json: chỉ lấy các IP đang giám sát, mới nhất đứng đầu."""
+    global _last_domains_cache
+    try:
+        with open(DOMAINS_FILE) as f:
+            d = json.load(f)
+        all_doms = d.get("domains", {})
+    except (FileNotFoundError, json.JSONDecodeError):
+        all_doms = {}
+    out: dict[str, list] = {}
+    for ip in monitored_ips:
+        lst = all_doms.get(ip)
+        if lst is None and ip in _last_domains_cache:
+            out[ip] = _last_domains_cache[ip]
+        else:
+            out[ip] = list(reversed((lst or [])[-150:]))
+    _last_domains_cache = out
+    return out
 
 
 def _read_sniffer_status() -> dict:
@@ -388,8 +593,10 @@ def _write_request(shutdown: bool = False) -> None:
         pass
     info = net_info()
     with _lock:
-        entries = [{"ip": ip, "mac": b["mac"], "interval_ms": b["interval_ms"]}
-                   for ip, b in _blocks.items()]
+        entries = ([{"ip": ip, "mac": b["mac"], "interval_ms": b["interval_ms"],
+                     "mode": "block"} for ip, b in _blocks.items()]
+                   + [{"ip": ip, "mac": m["mac"], "interval_ms": m["interval_ms"],
+                       "mode": "monitor"} for ip, m in _monitors.items()])
         gen = _generation
     payload = {
         "generation": gen,
@@ -410,17 +617,34 @@ def _write_request(shutdown: bool = False) -> None:
         pass
 
 
-def ensure_engine() -> tuple[bool, str]:
-    """Đảm bảo engine root đang chạy. Trả (ok, message). Có thể hiện hộp thoại admin."""
+def ensure_engine(force_restart: bool = False) -> tuple[bool, str]:
+    """Đảm bảo engine root đang chạy. Trả (ok, message). Có thể hiện hộp thoại admin.
+
+    Nếu engine đang chạy nhưng arp_engine.py nguồn đã được sửa (mtime mới hơn bản
+    copy trong STATE_DIR), hoặc force_restart=True, sẽ yêu cầu engine cũ thoát
+    sạch (khôi phục ARP/forwarding) rồi khởi động lại bản mới - để các thay đổi
+    code (vd: tính năng force-renew) có hiệu lực ngay mà không cần thao tác tay.
+    """
+    engine_run = STATE_DIR / "arp_engine.py"
     st = _read_engine_status()
+    if st.get("running") and not force_restart:
+        try:
+            if engine_run.is_file() and ENGINE.is_file():
+                if engine_run.stat().st_mtime >= ENGINE.stat().st_mtime:
+                    return True, "engine đang chạy"
+        except OSError:
+            return True, "engine đang chạy"
     if st.get("running"):
-        return True, "engine đang chạy"
+        _write_request(shutdown=True)
+        for _ in range(20):
+            if not _read_engine_status().get("running"):
+                break
+            time.sleep(0.25)
     _write_request()  # tạo request.json trước để engine đọc ngay
     py = sys.executable or "/usr/bin/python3"
     # Tiến trình root (qua osascript) KHÔNG mở được file trên ổ ngoài /Volumes
     # do TCC chặn -> copy engine (file độc lập, chỉ dùng stdlib) sang STATE_DIR
     # trên ổ hệ thống rồi chạy bản copy.
-    engine_run = STATE_DIR / "arp_engine.py"
     try:
         STATE_DIR.mkdir(parents=True, exist_ok=True)
         shutil.copyfile(ENGINE, engine_run)
@@ -529,12 +753,15 @@ def _check_network_and_blocks() -> None:
                 removed = [ip for ip in list(_blocks.keys()) if ipaddress.ip_address(ip) not in cur_net]
                 for ip in removed:
                     del _blocks[ip]
-                if removed:
+                removed_m = [ip for ip in list(_monitors.keys()) if ipaddress.ip_address(ip) not in cur_net]
+                for ip in removed_m:
+                    del _monitors[ip]
+                if removed or removed_m:
                     _bump_and_push()
                     _add_event(
                         "network_changed",
-                        f"Mạng Wi-Fi đã đổi sang {cur_subnet}/{prefixlen}. Đã tự động dọn {len(removed)} thiết bị mạng cũ.",
-                        {"old_subnet": _last_subnet, "new_subnet": cur_subnet, "removed": removed}
+                        f"Mạng Wi-Fi đã đổi sang {cur_subnet}/{prefixlen}. Đã tự động dọn {len(removed) + len(removed_m)} thiết bị mạng cũ.",
+                        {"old_subnet": _last_subnet, "new_subnet": cur_subnet, "removed": removed + removed_m}
                     )
             except Exception:
                 pass
@@ -626,12 +853,19 @@ def _check_network_and_blocks() -> None:
 
 
 def _monitor_loop() -> None:
+    global _last_auto_scan
     time.sleep(1.5)
     while True:
         try:
             _check_network_and_blocks()
         except Exception:
             pass
+        if _auto_monitor_enabled and time.time() - _last_auto_scan >= AUTO_SCAN_INTERVAL:
+            _last_auto_scan = time.time()
+            try:
+                scan()   # quét nền: tự monitor thiết bị lạ + tự ngừng khi dò được tên
+            except Exception:
+                pass
         time.sleep(2.0)
 
 
@@ -670,6 +904,7 @@ def do_block(ip: str, mac: str, interval_ms: int, name: str = "") -> dict:
             "fail_count": 0,
             "last_seen": time.time(),
         }
+        had_monitor = _monitors.pop(ip, None) is not None   # chặn thắng: gỡ giám sát nếu có
 
     ok, msg = ensure_engine()
     if not ok:
@@ -677,8 +912,72 @@ def do_block(ip: str, mac: str, interval_ms: int, name: str = "") -> dict:
             _blocks.pop(ip, None)
         return {"ok": False, "error": msg}
     _bump_and_push()
-    _add_event("block", f"Đã bắt đầu chặn {name or ip} ({ip})", {"ip": ip, "mac": mac, "name": name})
+    _add_event("block", f"Đã bắt đầu chặn {name or ip} ({ip})" +
+               (" — đã tự gỡ chế độ giám sát" if had_monitor else ""),
+               {"ip": ip, "mac": mac, "name": name})
     return {"ok": True, "message": f"Đã chặn {name or ip}", "blocked": _blocked_list()}
+
+
+def do_monitor(ip: str, mac: str, name: str = "") -> dict:
+    """Bật chế độ giám sát (MITM trong suốt): máy đích vẫn dùng mạng bình thường,
+    NetFence ghi lại tên miền (DNS + TLS SNI) mà thiết bị truy cập."""
+    info = net_info()
+    if not ip or not mac:
+        return {"ok": False, "error": "Thiếu ip hoặc mac."}
+    try:
+        addr = ipaddress.ip_address(ip)
+    except ValueError:
+        return {"ok": False, "error": "IP không hợp lệ."}
+    if not addr.is_private:
+        return {"ok": False, "error": "Chỉ giám sát thiết bị trong subnet private."}
+    if ip == info["gateway_ip"]:
+        return {"ok": False, "error": "Không thể giám sát gateway."}
+    if ip == info["ip"]:
+        return {"ok": False, "error": "Không thể giám sát chính máy này."}
+    with _lock:
+        if ip in _blocks:
+            return {"ok": False, "error": "Thiết bị đang bị chặn — bỏ chặn trước khi giám sát."}
+    cur = _arp_table().get(ip)
+    if cur and _norm_mac(mac) != cur:
+        return {"ok": False,
+                "error": f"MAC không khớp bảng ARP hiện tại ({cur}). Hãy quét lại."}
+
+    with _lock:
+        if ip not in _monitors and len(_monitors) >= MAX_ENTRIES:
+            return {"ok": False, "error": f"Đã đạt tối đa {MAX_ENTRIES} thiết bị giám sát."}
+        _monitors[ip] = {
+            "mac": _norm_mac(mac),
+            "name": name,
+            "interval_ms": DEFAULT_INTERVAL_MS,
+            "status": "online",
+            "last_seen": time.time(),
+        }
+
+    ok, msg = ensure_engine()
+    if not ok:
+        with _lock:
+            _monitors.pop(ip, None)
+        return {"ok": False, "error": msg}
+    ok_s, msg_s = ensure_sniffer()
+    if not ok_s:
+        with _lock:
+            _monitors.pop(ip, None)
+        _bump_and_push()
+        return {"ok": False, "error": msg_s}
+    _bump_and_push()
+    _add_event("monitor", f"Đã bật giám sát {name or ip} ({ip})", {"ip": ip, "mac": mac, "name": name})
+    return {"ok": True, "message": f"Đang giám sát {name or ip}", "monitors": _monitored_list()}
+
+
+def do_monitor_stop(ip: str) -> dict:
+    with _lock:
+        existed = _monitors.pop(ip, None)
+    if existed is None:
+        return {"ok": True, "message": f"{ip} vốn không bị giám sát", "monitors": _monitored_list()}
+    _bump_and_push()
+    name = existed.get("name") or ip
+    _add_event("monitor_stop", f"Đã dừng giám sát {name} ({ip})", {"ip": ip, "name": name})
+    return {"ok": True, "message": f"Đã dừng giám sát {name}", "monitors": _monitored_list()}
 
 
 def do_unblock(ip: str) -> dict:
@@ -695,11 +994,12 @@ def do_unblock(ip: str) -> dict:
 def do_stop() -> dict:
     with _lock:
         _blocks.clear()
+        _monitors.clear()
     global _generation
     _generation = int(time.time() * 1000)
     _write_request(shutdown=True)
-    _add_event("stop", "Đã bỏ chặn tất cả thiết bị & dừng engine.", {})
-    return {"ok": True, "message": "Đã bỏ chặn tất cả & dừng engine.", "blocked": []}
+    _add_event("stop", "Đã bỏ chặn/bỏ giám sát tất cả thiết bị & dừng engine.", {})
+    return {"ok": True, "message": "Đã bỏ chặn/bỏ giám sát tất cả & dừng engine.", "blocked": []}
 
 
 def do_cleanup_offline() -> dict:
@@ -717,9 +1017,29 @@ def do_cleanup_offline() -> dict:
     return {"ok": True, "message": f"Đã dọn dẹp {len(to_remove)} thiết bị ngoại tuyến.", "blocked": _blocked_list()}
 
 
+def do_auto_monitor(enabled: bool) -> dict:
+    global _auto_monitor_enabled, _last_auto_scan
+    _auto_monitor_enabled = bool(enabled)
+    if _auto_monitor_enabled:
+        _last_auto_scan = 0.0   # cho phép quét nền chạy ngay ở chu kỳ kế tiếp
+    else:
+        with _lock:
+            to_remove = [ip for ip, m in _monitors.items() if m.get("auto")]
+            for ip in to_remove:
+                del _monitors[ip]
+        if to_remove:
+            _bump_and_push()
+    return {"ok": True, "enabled": _auto_monitor_enabled}
+
+
 def _blocked_list() -> list:
     with _lock:
         return [{"ip": ip, **b} for ip, b in _blocks.items()]
+
+
+def _monitored_list() -> list:
+    with _lock:
+        return [{"ip": ip, **m} for ip, m in _monitors.items()]
 
 
 def do_sniff_start() -> dict:
@@ -731,17 +1051,26 @@ def do_sniff_start() -> dict:
 def status() -> dict:
     with _lock:
         blk = _blocked_list()
+        mon = _monitored_list()
         evts = list(_events)
         online_cnt = sum(1 for b in blk if b.get("status") != "offline")
         offline_cnt = sum(1 for b in blk if b.get("status") == "offline")
     eng_st = _read_engine_status()
     info = net_info()
+    doms_map = _read_domains([m["ip"] for m in mon])
+    for m in mon:
+        g = fingerprint.guess_from_domains([e["d"] for e in doms_map.get(m["ip"], [])])
+        if g:
+            m["guess"] = g
     return {
         "ok": True,
         "info": info,
         "engine": eng_st,
         "sniffer": _read_sniffer_status(),
         "blocked": blk,
+        "monitors": mon,
+        "domains": doms_map,
+        "auto_monitor": _auto_monitor_enabled,
         "blocked_summary": {
             "total": len(blk),
             "online": online_cnt,
@@ -799,7 +1128,10 @@ class Handler(BaseHTTPRequestHandler):
             self._json(status())
         elif p == "/api/scan":
             try:
-                self._json(scan())
+                qs = parse_qs(urlparse(self.path).query)
+                am_param = qs.get("auto_monitor")
+                am = (am_param[0] != "0") if am_param is not None else _auto_monitor_enabled
+                self._json(scan(auto_monitor=am))
             except Exception as e:  # noqa: BLE001
                 self._json({"ok": False, "error": str(e)}, 500)
         elif p.startswith("/static/"):
@@ -823,6 +1155,13 @@ class Handler(BaseHTTPRequestHandler):
                                     data.get("name", "")))
             elif p == "/api/unblock":
                 self._json(do_unblock(data.get("ip", "")))
+            elif p == "/api/monitor":
+                self._json(do_monitor(data.get("ip", ""), data.get("mac", ""),
+                                      data.get("name", "")))
+            elif p == "/api/monitor_stop":
+                self._json(do_monitor_stop(data.get("ip", "")))
+            elif p == "/api/auto_monitor":
+                self._json(do_auto_monitor(bool(data.get("enabled", True))))
             elif p == "/api/stop":
                 self._json(do_stop())
             elif p == "/api/cleanup_offline":
@@ -864,6 +1203,7 @@ def main() -> int:
     if sys.platform != "darwin":
         print("NetFence chỉ hỗ trợ macOS.", file=sys.stderr)
         return 1
+    _ensure_local_network_python()
     if not (STATIC / "index.html").is_file():
         print(f"Thiếu giao diện: {STATIC/'index.html'}", file=sys.stderr)
         return 1
